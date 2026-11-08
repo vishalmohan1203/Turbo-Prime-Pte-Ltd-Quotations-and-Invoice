@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Quotations{% endblock %} · Turbo Prime ERP</title>
+<style>
+  :root { --navy:#0b3c5d; --teal:#1d7a8c; --bg:#f2f6f9; --line:#d3dde5; --err:#b3261e; --ok:#1b7f3b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.45 "Segoe UI",system-ui,sans-serif; background:var(--bg); color:#17252f; }
+  header { background:var(--navy); color:#fff; padding:14px 24px; display:flex; align-items:center; gap:24px; }
+  header h1 { font-size:18px; margin:0; letter-spacing:.3px; }
+  header small { opacity:.7; display:block; font-weight:400; font-size:12px; }
+  header nav { display:flex; flex:1; flex-wrap:wrap; row-gap:6px; }
+  header nav a { color:#fff; text-decoration:none; margin-right:18px; opacity:.85; }
+  header nav a:hover { opacity:1; text-decoration:underline; }
+  main { max-width:1050px; margin:24px auto; padding:0 16px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:22px; margin-bottom:18px; }
+  h2 { margin:0 0 14px; font-size:18px; color:var(--navy); }
+  label { display:block; font-weight:600; font-size:13px; margin-bottom:4px; color:#34495a; }
+  input, select, textarea { width:100%; padding:8px 10px; border:1px solid #b9c7d2; border-radius:5px; font:inherit; background:#fff; }
+  input:focus, select:focus, textarea:focus { outline:2px solid var(--teal); border-color:var(--teal); }
+  input[readonly] { background:#eef3f6; }
+  /* number boxes: plain typed values, no up/down arrows */
+  input[type=number] { -moz-appearance:textfield; appearance:textfield; }
+  input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+  textarea { resize:vertical; }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); }
+  .span2 { grid-column:span 2; }
+  .btn { display:inline-block; background:var(--navy); color:#fff; border:0; padding:9px 18px; border-radius:5px; cursor:pointer; text-decoration:none; font:inherit; font-weight:600; }
+  .btn:hover { background:#082c45; }
+  .btn.sec { background:#fff; color:var(--navy); border:1px solid var(--navy); }
+  .btn.sec:hover { background:#e8f1f8; }
+  .btn.danger { background:#fff; color:var(--err); border:1px solid var(--err); }
+  .btn.sm { padding:5px 11px; font-size:13px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { padding:9px 8px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { background:#e8f1f8; color:var(--navy); font-size:13px; }
+  td.num, th.num { text-align:right; }
+  .flash { padding:10px 14px; border-radius:5px; margin-bottom:10px; }
+  .flash.ok { background:#e3f4e8; color:var(--ok); border:1px solid #b5dfc1; }
+  .flash.err { background:#fbe9e7; color:var(--err); border:1px solid #f1bdb8; }
+  .actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .flow { display:flex; flex-wrap:wrap; align-items:stretch; gap:6px; margin-bottom:16px; }
+  .flow .step { display:flex; flex-direction:column; justify-content:center; padding:7px 12px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--navy); text-decoration:none; min-width:118px; }
+  .flow .step b { font-size:13px; } .flow .step small { font-size:12px; color:#5b6b78; }
+  .flow .step.done { border-color:var(--teal); } .flow .step.todo { background:#f4f6f8; color:#8a97a3; }
+  .flow .step.cur { background:var(--navy); border-color:var(--navy); color:#fff; } .flow .step.cur small { color:#d6e4ee; }
+  .flow .arrow { align-self:center; color:#8a97a3; }
+  .qno { font-size:22px; font-weight:700; color:var(--navy); }
+  .badge { display:inline-block; padding:2px 9px; border-radius:20px; font-size:12px; font-weight:600; background:#e8f1f8; color:var(--navy); text-decoration:none; }
+  .badge.ok { background:#e3f4e8; color:var(--ok); }
+  .muted { color:#6a7d8b; }
+  .toolbar { display:flex; gap:10px; justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; }
+  @media (max-width:640px){ .span2{grid-column:span 1;} }
+</style>
+</head>
+<body>
+<header>
+  <h1>{{ company.short }} <small>Quotation Manager{% if g.user %} · <a href="{{ url_for('company_select') }}" style="color:#fff;opacity:1">switch company</a>{% endif %}</small></h1>
+  <nav><a href="{{ url_for('index') }}">Quotations</a><a href="{{ url_for('jobs') }}">Job Orders</a><a href="{{ url_for('purchase_orders') }}">Purchase Orders</a><a href="{{ url_for('deliveries') }}">Delivery Orders</a><a href="{{ url_for('invoices') }}">Tax Invoices</a><a href="{{ url_for('new') }}">+ New Quotation</a><a href="{{ url_for('saved') }}">Saved Addresses &amp; T/C Types</a>{% if g.user and g.user['is_admin'] %}<a href="{{ url_for('terms_page') }}">T&amp;C Options</a><a href="{{ url_for('bank') }}">Bank Details</a>{% endif %}
+    {% if g.user %}<span style="margin-left:auto;display:flex;gap:18px;align-items:center">
+      {% if g.user['is_admin'] %}<a href="{{ url_for('users') }}" style="margin:0">Users</a>{% endif %}
+      <a href="{{ url_for('account') }}" style="margin:0">{{ g.user['username'] }}</a>
+      <a href="{{ url_for('logout') }}" style="margin:0">Log out</a></span>{% endif %}</nav>
+</header>
+<main>
+  {% for category, msg in get_flashed_messages(with_categories=true) %}
+    <div class="flash {{ category }}">{{ msg }}</div>
+  {% endfor %}
+  {% block content %}{% endblock %}
+</main>
+<script>
+// the mouse wheel must not change a number that is being typed
+document.addEventListener('wheel', e => { if (e.target.type === 'number' && document.activeElement === e.target) e.target.blur(); }, {passive: true});
+</script>
+</body>
+</html>

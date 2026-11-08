@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Job Orders{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="toolbar">
+    <h2 style="margin:0">Job Orders</h2>
+    <form method="get" style="display:flex;gap:8px;max-width:360px;width:100%">
+      <input name="q" value="{{ search }}" placeholder="Search job order, PO, customer…">
+      <button class="btn sec" type="submit">Search</button>
+    </form>
+  </div>
+  {% if rows %}
+  <table>
+    <thead><tr><th>Job order no</th><th>Date</th><th>To</th><th>PO #</th><th>Quotation</th><th>Actions</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td><a href="{{ url_for('job_view', jid=r['id']) }}"><strong>{{ r['jo_no'] }}</strong></a></td>
+        <td>{{ r['jo_date']|dmy }}</td>
+        <td>{{ r['to_address'].splitlines()[0] if r['to_address'] else '' }}</td>
+        <td>{{ r['po_number'] or '—' }}</td>
+        <td><a href="{{ url_for('view', qid=r['quotation_id']) }}">{{ r['quote_no'] }}</a></td>
+        <td><div class="actions">
+          <a class="btn sm" href="{{ url_for('job_pdf', jid=r['id']) }}" target="_blank">PDF</a>
+          <a class="btn sm sec" href="{{ url_for('job_view', jid=r['id']) }}">Open</a>
+          <a class="btn sm sec" href="{{ url_for('po_new', jid=r['id']) }}">Purchase order</a>
+        </div></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">No job orders yet. Open a quotation and click <strong>Quotation accepted</strong> to create one.</p>
+  {% endif %}
+</div>
+{% endblock %}

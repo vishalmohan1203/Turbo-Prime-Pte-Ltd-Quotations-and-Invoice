@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Bank Details{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Bank details <span class="badge">Administrator only</span></h2>
+  <p class="muted" style="margin-top:0">Only an administrator can see or change these. For a company with a set per currency, a new tax invoice starts with the set of its own currency, and the person making the invoice can choose another set there. The general details of a company are used on tax invoices in any other currency.</p>
+</div>
+{% for key, c in companies.items() %}
+{% if cur_banks.get(key) %}
+<h3 style="margin:18px 0 6px" id="{{ key }}">{{ c.name }}{% if company.key == key %} <span class="badge ok">current company</span>{% endif %}</h3>
+{% for cur, text in cur_banks[key] %}
+<form method="post" class="card" id="{{ key }}{{ cur }}" autocomplete="off">
+  <input type="hidden" name="company" value="{{ key }}"><input type="hidden" name="currency" value="{{ cur }}">
+  <label for="bank_{{ key }}_{{ cur }}">{{ cur }} details</label>
+  <textarea id="bank_{{ key }}_{{ cur }}" name="bank_details" rows="6">{{ text }}</textarea>
+  <label style="font-weight:400;margin-top:8px"><input type="checkbox" name="apply_existing" value="1" style="width:auto"> Also update the bank details on existing {{ cur }} tax invoices of this company</label>
+  <p style="margin-bottom:0"><button class="btn" type="submit">Save {{ cur }} details</button></p>
+</form>
+{% endfor %}
+{% endif %}
+<form method="post" class="card" autocomplete="off">
+  <input type="hidden" name="company" value="{{ key }}">
+  <label for="bank_{{ key }}">{% if cur_banks.get(key) %}General details (other currencies){% else %}{{ c.name }}{% if company.key == key %} <span class="badge ok">current company</span>{% endif %}{% endif %}</label>
+  <textarea id="bank_{{ key }}" name="bank_details" rows="7">{{ banks[key] }}</textarea>
+  <label style="font-weight:400;margin-top:8px"><input type="checkbox" name="apply_existing" value="1" style="width:auto"> Also update the bank details on this company's existing tax invoices (otherwise they keep the details they were made with)</label>
+  <p style="margin-bottom:0"><button class="btn" type="submit">Save bank details</button></p>
+</form>
+{% endfor %}
+{% endblock %}

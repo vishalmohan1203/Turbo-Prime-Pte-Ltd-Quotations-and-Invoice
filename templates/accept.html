@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Accept quotation {{ q['quote_no'] }}{% endblock %}
+{% block content %}
+<form method="post" autocomplete="off">
+  <div class="card">
+    <h2>Quotation {{ q['quote_no'] }} accepted by the client</h2>
+    <p class="muted" style="margin-top:0">Fill in the customer's PO details to create the job order. Everything else (address, items, prices, discount, remarks, terms) is copied from the quotation, and the items can be edited on the job order afterwards.</p>
+    <div class="grid">
+      <div><label>To</label><div style="white-space:pre-line">{{ q['to_address'] }}</div></div>
+      <div><label>Quotation total</label>{{ q['currency'] }} {{ q['total']|money }}<br><span class="muted">{{ items|length }} item(s)</span></div>
+      <div>
+        <label for="jo_no">Job order no</label>
+        <input id="jo_no" name="jo_no" value="{{ form.jo_no }}" maxlength="30" required>
+        <input type="hidden" name="suggested_no" value="{{ form.suggested }}">
+        <div class="muted" style="font-size:12px">Automatic - you can edit it.</div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="grid">
+      <div>
+        <label for="po_number">Customer PO number</label>
+        <input id="po_number" name="po_number" value="{{ form.po_number }}" autofocus>
+        <div class="muted" style="font-size:12px">Can be left blank and added later.</div>
+      </div>
+      <div>
+        <label for="jo_date">Job order date *</label>
+        <input type="date" id="jo_date" name="jo_date" value="{{ form.jo_date }}" required>
+      </div>
+    </div>
+  </div>
+  <div class="actions">
+    <button class="btn" type="submit" onclick="return confirm('Create the job order? The quotation will be locked and can no longer be edited or deleted.')">Create job order</button>
+    <a class="btn sec" href="{{ url_for('view', qid=q['id']) }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

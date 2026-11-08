@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Choose company{% endblock %}
+{% block content %}
+<div class="card" style="max-width:760px;margin:30px auto">
+  <h2>Which company are you working for?</h2>
+  <p class="muted" style="margin-top:0">The letterhead on every quotation, job order, delivery order and tax invoice follows your choice. You can switch at any time from the top bar.</p>
+  {% for key, c in companies.items() %}
+  <form method="post" style="margin-bottom:14px">
+    <input type="hidden" name="company" value="{{ key }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <button type="submit" style="display:block;width:100%;text-align:left;background:#fff;border:2px solid {{ 'var(--teal)' if company.key == key and session.get('company') else 'var(--line)' }};border-radius:8px;padding:12px;cursor:pointer;font:inherit">
+      <img src="{{ url_for('static', filename=c.header) }}" alt="{{ c.name }}" style="width:100%;display:block;margin-bottom:8px">
+      <span class="btn" style="pointer-events:none">Continue as {{ c.name }}</span>
+    </button>
+  </form>
+  {% endfor %}
+</div>
+{% endblock %}

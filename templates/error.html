@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Something went wrong{% endblock %}
+{% block content %}
+<div class="card" style="max-width:760px;margin:30px auto">
+  <h2>Something went wrong</h2>
+  <p>The page could not be completed. Nothing was lost - your saved data is safe. Please go back and try again.</p>
+  {% if detail %}
+  <label>Technical details (please send a screenshot of this if it keeps happening)</label>
+  <pre style="white-space:pre-wrap;background:#f4f6fa;border:1px solid var(--line);border-radius:6px;padding:10px;margin:0 0 10px">{{ where }}
+{{ detail }}</pre>
+  {% endif %}
+  <p style="margin-bottom:0"><a class="btn" href="{{ url_for('index') }}">Back to quotations</a>
+     <a class="btn sec" href="javascript:history.back()">Go back</a></p>
+</div>
+{% endblock %}

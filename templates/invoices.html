@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Tax Invoices{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="toolbar">
+    <h2 style="margin:0">Tax Invoices</h2>
+    <form method="get" style="display:flex;gap:8px;max-width:360px;width:100%">
+      <input name="q" value="{{ search }}" placeholder="Search invoice, delivery order, job order, PO, vessel, customer…">
+      <button class="btn sec" type="submit">Search</button>
+    </form>
+  </div>
+  {% if rows %}
+  <table>
+    <thead><tr><th>Invoice no</th><th>Date</th><th>To</th><th>PO No</th><th>Vessel</th><th>Delivery order</th><th>Actions</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td><a href="{{ url_for('invoice_view', iid=r['id']) }}"><strong>{{ r['inv_no'] }}</strong></a></td>
+        <td>{{ r['inv_date']|dmy }}</td>
+        <td>{{ r['to_address'].splitlines()[0] if r['to_address'] else '' }}</td>
+        <td>{{ r['po_number'] or '—' }}</td>
+        <td>{{ r['vessel_name'] or '—' }}</td>
+        <td><a href="{{ url_for('delivery_view', did=r['do_id']) }}">{{ r['do_no'] }}</a></td>
+        <td><div class="actions">
+          <a class="btn sm" href="{{ url_for('invoice_pdf', iid=r['id']) }}" target="_blank">PDF</a>
+          <a class="btn sm sec" href="{{ url_for('invoice_view', iid=r['id']) }}">Open</a>
+        </div></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">No tax invoices yet. Open a delivery order and click <strong>Create tax invoice</strong>.</p>
+  {% endif %}
+</div>
+{% endblock %}
