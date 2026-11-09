@@ -932,6 +932,18 @@ def init_db():
             db.execute("INSERT INTO users (username, pw_hash, is_admin, created_at) VALUES (?, ?, 1, ?)",
                        (ADMIN_USER, generate_password_hash(APP_PASSWORD),
                         datetime.now().isoformat(timespec="seconds")))
+        # forgotten password on a server: set RESET_ADMIN_PASSWORD in the host's settings, restart,
+        # log in, then REMOVE the variable (while it is set, every restart resets the password again)
+        reset_pw = os.environ.get("RESET_ADMIN_PASSWORD", "")
+        if reset_pw:
+            hit = db.execute("UPDATE users SET pw_hash = ?, is_admin = 1 WHERE username = ? COLLATE NOCASE",
+                             (generate_password_hash(reset_pw), ADMIN_USER)).rowcount
+            if not hit:
+                db.execute("INSERT INTO users (username, pw_hash, is_admin, created_at) VALUES (?, ?, 1, ?)",
+                           (ADMIN_USER, generate_password_hash(reset_pw),
+                            datetime.now().isoformat(timespec="seconds")))
+            app.logger.warning("RESET_ADMIN_PASSWORD is set: password of '%s' was reset. "
+                               "Remove the variable now.", ADMIN_USER)
 
 
 QUOTE_SERIES = re.compile(r"^" + QUOTE_PREFIX + r"(\d{2})(\d{4,})$", re.I)
