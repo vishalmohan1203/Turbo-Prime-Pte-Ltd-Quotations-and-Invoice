@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Delivery Order {{ dlv.do_no }}{% endblock %}
+{% block content %}
+{% from "_flow.html" import flow %}{{ flow(flow_for(q['id'], 'do')) }}
+<form method="post" autocomplete="off">
+  <div class="card">
+    <div class="toolbar">
+      <div><span class="muted">Delivery order</span><div class="qno">{{ dlv.do_no }}</div>
+        <span class="muted">From job order <a href="{{ url_for('job_view', jid=jo['id']) }}">{{ jo['jo_no'] }}</a> · quotation <a href="{{ url_for('view', qid=q['id']) }}">{{ q['quote_no'] }}</a></span></div>
+      <div class="actions">
+        <a class="btn" href="{{ url_for('delivery_pdf', did=dlv.id, download=1) }}">Download PDF</a>
+        <a class="btn sec" href="{{ url_for('delivery_pdf', did=dlv.id) }}" target="_blank">Open PDF</a>
+        <a class="btn" href="{{ url_for('invoice_new', did=dlv.id) }}">Create tax invoice →</a>
+      </div>
+    </div>
+    <p class="muted" style="margin-top:0">Save your changes first, then download the PDF - the PDF shows the saved delivery order.</p>
+    <div class="grid">
+      <div><label>To</label><div style="white-space:pre-line">{{ q['to_address'] }}</div>
+        <div style="height:10px"></div><label>TC Type</label>{{ q['tc_type'] or '—' }}</div>
+      <div>
+        <label for="do_no">Delivery order no (automatic - editable)</label>
+        <input id="do_no" name="do_no" value="{{ dlv.do_no }}" maxlength="30" required>
+        <div style="height:10px"></div>
+        <label for="do_date">Date</label>
+        <input type="date" id="do_date" name="do_date" value="{{ dlv.do_date }}" required>
+      </div>
+      <div>
+        <label for="shipper_name">Shipper name</label>
+        <input id="shipper_name" name="shipper_name" value="{{ dlv.shipper_name }}">
+        <div style="height:10px"></div>
+        <label for="vessel_name">Vessel name</label>
+        <input id="vessel_name" name="vessel_name" value="{{ dlv.vessel_name }}">
+      </div>
+      <div>
+        <label for="po_number">Customer PO No.</label>
+        <input id="po_number" name="po_number" value="{{ dlv.po_number }}">
+        <div class="muted" style="font-size:12px">Can be changed any time; also applied to this delivery order's tax invoices that still show the old number.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Items</h2>
+    <p class="muted" style="margin-top:0">Edit descriptions and quantities if an item is not available, and enter the part numbers. Changes here do not affect the job order. The PDF carries no prices.</p>
+    <table id="items">
+      <thead><tr>
+        <th style="width:44px">#</th><th>Item description *</th>
+        <th style="width:170px">Part No</th>
+        <th style="width:100px" class="num">Quantity *</th><th style="width:40px"></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <p><button type="button" class="btn sec sm" id="addRow">+ Add item</button></p>
+  </div>
+
+  <div class="card">
+    <div class="toolbar" style="margin-bottom:6px">
+      <h2 style="margin:0">Tax invoices</h2>
+      <a class="btn" href="{{ url_for('invoice_new', did=dlv.id) }}">Create tax invoice →</a>
+    </div>
+    <p class="muted" style="margin-top:0">A tax invoice copies the <strong>saved</strong> items of this delivery order (save your changes first) and adds unit prices from the job order.</p>
+    {% if invoices %}
+    <table>
+      {% for i in invoices %}
+      <tr><td><a href="{{ url_for('invoice_view', iid=i['id']) }}"><strong>{{ i['inv_no'] }}</strong></a></td>
+          <td>{{ i['inv_date']|dmy }}</td>
+          <td class="num"><a class="btn sm" href="{{ url_for('invoice_pdf', iid=i['id']) }}" target="_blank">PDF</a>
+              <a class="btn sm sec" href="{{ url_for('invoice_view', iid=i['id']) }}">Open</a></td></tr>
+      {% endfor %}
+    </table>
+    {% else %}<p class="muted" style="margin-bottom:0">No tax invoices yet.</p>{% endif %}
+  </div>
+
+  <div class="actions">
+    <button class="btn" type="submit">Save delivery order</button>
+    <a class="btn sec" href="{{ url_for('deliveries') }}">Back to delivery orders</a>
+  </div>
+</form>
+<form method="post" action="{{ url_for('delivery_delete', did=dlv.id) }}" style="margin-top:12px" onsubmit="return confirm('Delete delivery order {{ dlv.do_no }}? This cannot be undone.')">
+  <button class="btn sm danger" type="submit">Delete this delivery order</button>
+</form>
+
+<script>
+const initialItems = {{ items|tojson }};
+const tbody = document.querySelector('#items tbody');
+function esc(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+function renumber(){ [...tbody.rows].forEach((tr, i) => tr.querySelector('.sno').textContent = i + 1); }
+function addRow(it = {}) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td class="sno"></td>
+    <td><textarea name="description" rows="5">${esc(it.description)}</textarea></td>
+    <td><input name="part_no" value="${esc(it.part_no)}"></td>
+    <td><input name="qty" type="number" step="any" min="0" class="num" value="${esc(it.qty)}"></td>
+    <td><button type="button" class="btn sm danger rm" title="Remove">&times;</button></td>`;
+  tbody.appendChild(tr);
+  renumber();
+}
+tbody.addEventListener('click', e => {
+  if (e.target.classList.contains('rm') && tbody.rows.length > 1) { e.target.closest('tr').remove(); renumber(); }
+});
+document.getElementById('addRow').onclick = () => addRow();
+(initialItems.length ? initialItems : [{}]).forEach(addRow);
+</script>
+{% endblock %}
