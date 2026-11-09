@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Purchase Orders{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="toolbar" style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center">
+    <h2 style="margin:0">Purchase Orders</h2>
+    <form method="get" style="display:flex;gap:8px;width:360px;max-width:100%">
+      <input name="q" value="{{ search }}" placeholder="Search PO no, job order, supplier, ref…">
+      <button class="btn sec" type="submit">Search</button>
+    </form>
+    <a class="btn" href="{{ url_for('po_new') }}" style="justify-self:end">+ New purchase order</a>
+  </div>
+  {% if rows %}
+  {% set has_jobs = rows|selectattr('jo_id')|list|length > 0 %}
+  <table>
+    <thead><tr><th>PO no</th><th>Date</th><th>Supplier</th><th>Your ref</th>{% if has_jobs %}<th>Job order</th>{% endif %}<th class="num">Total</th><th>Actions</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td><a href="{{ url_for('po_view', pid=r['id']) }}"><strong>{{ r['po_no'] }}</strong></a></td>
+        <td>{{ r['po_date']|dmy }}</td>
+        <td>{{ r['to_address'].splitlines()[0] if r['to_address'] else '' }}</td>
+        <td>{{ r['your_ref'] or '—' }}</td>
+        {% if has_jobs %}<td>{% if r['jo_id'] %}<a href="{{ url_for('job_view', jid=r['jo_id']) }}">{{ r['jo_no'] }}</a>{% else %}<span class="muted">Stand-alone</span>{% endif %}</td>{% endif %}
+        <td class="num" style="white-space:nowrap">{{ r['currency'] }} {{ r['total']|money }}</td>
+        <td><div class="actions">
+          <a class="btn sm" href="{{ url_for('po_pdf', pid=r['id']) }}" target="_blank">PDF</a>
+          <a class="btn sm sec" href="{{ url_for('po_view', pid=r['id']) }}">Open</a>
+          <form method="post" action="{{ url_for('po_delete', pid=r['id']) }}" onsubmit="return confirm('Are you sure you want to delete purchase order {{ r['po_no'] }}? This cannot be undone.')">
+            <button class="btn sm danger" type="submit">Delete</button>
+          </form>
+        </div></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">No purchase orders yet. Click <strong>+ New purchase order</strong> above to create one.</p>
+  {% endif %}
+</div>
+{% endblock %}
