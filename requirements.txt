@@ -1,4 +1,0 @@
-Flask>=3.0
-reportlab>=4.0
-gunicorn>=22.0
-waitress>=3.0
