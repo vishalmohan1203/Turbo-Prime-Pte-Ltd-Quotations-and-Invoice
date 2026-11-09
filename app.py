@@ -1527,6 +1527,9 @@ def build_job_pdf(q, items, jo):
     base = ParagraphStyle("base", fontName="Helvetica", fontSize=11, leading=14.3, textColor=NAVY)
     bold = ParagraphStyle("bold", parent=base, fontName="Helvetica-Bold", leading=12)
     desc_st = ParagraphStyle("desc_st", parent=base, leading=14)
+    # item text centred under the 'Item description' heading (centre 193 pt); the spanned spacer column
+    # 306-335 is held back on the right so short and long lines share the heading's centre
+    desc_c = ParagraphStyle("desc_c", parent=desc_st, alignment=TA_CENTER, rightIndent=29)
     title = ParagraphStyle("title", parent=bold, fontSize=16, leading=19, alignment=TA_CENTER)
     ctr = ParagraphStyle("ctr", parent=base, alignment=TA_CENTER)
     head_c = ParagraphStyle("head_c", parent=bold, alignment=TA_CENTER)
@@ -1556,7 +1559,7 @@ def build_job_pdf(q, items, jo):
     cw = [50, 226, 29, W - 305]
     rows = [[Paragraph("#", bold), Paragraph("Item description", head_c), "", Paragraph("Quantity", head_c)]]
     for it in items:
-        rows.append([Paragraph(txt(it["sno"]), desc_st), Paragraph(rich(it["description"]), desc_st), "",
+        rows.append([Paragraph(txt(it["sno"]), desc_st), Paragraph(rich(it["description"]), desc_c), "",
                      Paragraph(fmt_qty(it["qty"]), ctr)])
     t = Table(rows, colWidths=cw, repeatRows=1)
     style = [("BOX", (0, 0), (-1, 0), 0.8, colors.black), ("VALIGN", (0, 0), (-1, -1), "TOP"),
