@@ -1661,8 +1661,7 @@ def build_pdf(q, items, jo=None, do=None):
                             para(it["part_no"], ctr), para(fmt_qty(it["qty"]), right)])
         do_t = Table(do_rows, colWidths=[9 * mm, 101 * mm, 35 * mm, 30 * mm], repeatRows=1)
         do_t.setStyle(TableStyle([
-            ("BOX", (0, 0), (-1, 0), 0.8, colors.black),
-            ("INNERGRID", (0, 0), (-1, 0), 0.8, colors.black),
+            ("BOX", (0, 0), (-1, 0), 0.8, colors.black),                 # header box only, no column lines
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
             ("RIGHTPADDING", (-1, 1), (-1, -1), 4),
@@ -1964,8 +1963,7 @@ def build_po_pdf(q, po, items):
                      Paragraph(fmt_money(it["unit_price"]), right), Paragraph(fmt_money(it["line_total"]), right)])
     items_t = Table(rows, colWidths=PO_COLS, repeatRows=1)
     items_t.setStyle(TableStyle([
-        ("BOX", (0, 0), (-1, 0), 1.5, colors.black),
-        ("LINEBEFORE", (1, 0), (3, 0), 0.6, colors.black), ("LINEBEFORE", (4, 0), (4, 0), 0.6, colors.black),
+        ("BOX", (0, 0), (-1, 0), 1.5, colors.black),                     # header box only, no column lines
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 1.9), ("RIGHTPADDING", (0, 0), (-1, -1), 1.9),
         ("RIGHTPADDING", (4, 0), (4, -1), 5.2),
@@ -2015,6 +2013,8 @@ def build_export_pdf(kind, row, items):
     details (No / Shipper Name / Date / TC Type / Vessel Name / Customer PO No), item table, 'Customer PO No :' line, (the
     Total(currency) of a commercial invoice) and 'Dimensions and Weight :'. Runs onto further pages with
     the letterhead repeated, when there are many items."""
+    if kind == "pl":
+        return build_pl_pdf(row, items)
     K = EXPORT_KINDS[kind]
     company = row["company"] or "pte"
     no = row[K["no"]]
@@ -2092,6 +2092,73 @@ def build_export_pdf(kind, row, items):
     return buf
 
 
+PL_BOX_LEFT = 28.3                       # Packing List item table: as in the Excel sample (pt from the page edge)
+PL_COLS = [21.5, 197.9, 95.9, 224.6]     # # | Item description | Part No | Quantity  (box 28.3 - 568.2 pt)
+PL_INFO_X = 346.1                        # left edge of the No / Shipper Name / ... block
+
+
+def build_pl_pdf(row, items):
+    """Packing List laid out like the company's Excel sample: letterhead, 'Packing List' (20 pt, bold,
+    underlined), To + address on the left and No / Shipper Name / Date / TC Type / Vessel Name / PO No
+    on the right, the item table under a single header box (no column lines), then the bold
+    'PO No :' line and 'Dimensions and Weight :'. Arial-metric text, 11 pt, 14.5 pt line pitch."""
+    company = row["company"] or "pte"
+    no = row["pl_no"]
+    buf = io.BytesIO()
+    doc, header, _hh = make_doc(buf, A4, EXP_LEFT - 6, A4[0] - EXP_RIGHT - 6, 12, 40, company, f"Packing List {no}")
+    x0 = doc.leftMargin + 6                                       # where frame content starts on the page
+    base = ParagraphStyle("pl_base", fontName="Helvetica", fontSize=11, leading=14.5, textColor=NAVY)
+    bold = ParagraphStyle("pl_bold", parent=base, fontName="Helvetica-Bold")
+    title = ParagraphStyle("pl_title", parent=bold, fontSize=20, leading=24, alignment=TA_CENTER,
+                           rightIndent=2 * (x0 + (doc.width - 12) / 2 - A4[0] / 2))  # centred on the page
+    ctr = ParagraphStyle("pl_ctr", parent=base, alignment=TA_CENTER)
+    head_c = ParagraphStyle("pl_head_c", parent=bold, alignment=TA_CENTER)
+    ind = ParagraphStyle("pl_ind", parent=base, leftIndent=PL_BOX_LEFT + PL_COLS[0] + 2.5 - x0)
+
+    def txt(v):
+        return escape(str(v or "")).replace("\n", "<br/>")
+
+    date = fmt_date(row["pl_date"]).replace("-", "/")
+    lines = [f"No : {no}", f"Shipper Name : {row['shipper_name'] or ''}", f"Date : {date}",
+             f"TC Type : {row['tc_type'] or ''}", f"Vessel Name : {row['vessel_name'] or ''}",
+             f"PO No : {row['po_no'] or ''}"]
+    text_left = 30.8
+    left_w = PL_INFO_X - text_left
+    info = Table([[Paragraph(txt(row["to_address"]), base), Paragraph("<br/>".join(txt(l) for l in lines), base)]],
+                 colWidths=[left_w - 8, A4[0] - PL_INFO_X - 20])
+    info.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                              ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0),
+                              ("BOTTOMPADDING", (0, 0), (-1, -1), 0), ("LEFTPADDING", (1, 0), (1, 0), 8)]))
+    info.hAlign = "LEFT"
+
+    rows = [[Paragraph("#", head_c), Paragraph("Item description", bold), Paragraph("Part No", head_c),
+             Paragraph("Quantity", head_c)]]
+    for it in items:
+        rows.append([Paragraph(txt(it["sno"]), ctr), Paragraph(rich(it["description"]), base),
+                     Paragraph(txt(it["part_no"]), ctr), Paragraph(fmt_qty(it["qty"]), ctr)])
+    items_t = Table(rows, colWidths=PL_COLS, repeatRows=1)
+    items_t.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, 0), 0.8, colors.black),                 # header box only, no column lines
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2.5), ("RIGHTPADDING", (0, 0), (-1, -1), 2.5),
+        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, 0), 0.45), ("BOTTOMPADDING", (0, 0), (-1, 0), 0.45),
+        ("TOPPADDING", (0, 1), (-1, 1), 0)]))
+    items_t.hAlign = "LEFT"
+
+    foot = [Spacer(1, 29.1), Paragraph(f"PO No : {txt(row['po_no'])}", ParagraphStyle("pl_ind_b", parent=ind,
+                                                                                     fontName="Helvetica-Bold")),
+            Spacer(1, 29), Paragraph("Dimensions and Weight :", ind)]
+    for l in (row["dimensions"] or "").replace("\r", "").split("\n"):
+        foot.append(Paragraph(txt(l), ind) if l.strip() else Spacer(1, 6))
+    story = [NextPageTemplate("later"), header, Spacer(1, 15), Paragraph("<u>Packing List</u>", title),
+             Spacer(1, 15.7), _Indent(Paragraph("To", bold), text_left - x0), _Indent(info, text_left - x0),
+             Spacer(1, 29.1), _IndentSplit(items_t, PL_BOX_LEFT - x0), KeepTogether(foot)]
+    doc.build(story)
+    buf.seek(0)
+    return buf
+
+
 class _Indent(Spacer):
     """Wraps a flowable and draws it `left` pt in from the frame's left edge."""
 
@@ -2106,6 +2173,13 @@ class _Indent(Spacer):
 
     def draw(self):
         self.f.drawOn(self.canv, self.left, 0)
+
+
+class _IndentSplit(_Indent):
+    """_Indent that can run over a page break (for long item tables)."""
+
+    def split(self, aw, ah):
+        return [_IndentSplit(f, self.left) for f in self.f.split(aw - self.left, ah)]
 
 
 # --------------------------------------------------------------------------
