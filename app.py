@@ -1266,20 +1266,24 @@ def lh_image_path(kind):
 
 
 def find_font(bold):
-    """Arial-style font for the letterhead: the one shipped in static/fonts, else one installed on the
-    computer (Arial on Windows, Liberation / DejaVu on Linux)."""
-    name = "LiberationSans-Bold.ttf" if bold else "LiberationSans-Regular.ttf"
+    """Arial for the letterhead. Real Arial is used when it is available (arial.ttf / arialbd.ttf put in
+    static/fonts, or installed on Windows / Mac); otherwise Liberation Sans, shipped in static/fonts,
+    which has exactly the same letter widths as Arial, so the header looks the same on every server."""
+    fonts = os.path.join(BASE_DIR, "static", "fonts")
+    lib = "LiberationSans-Bold.ttf" if bold else "LiberationSans-Regular.ttf"
     candidates = [
-        os.path.join(BASE_DIR, "static", "fonts", name),
+        os.path.join(fonts, "arialbd.ttf" if bold else "arial.ttf"),
         r"C:\Windows\Fonts\arialbd.ttf" if bold else r"C:\Windows\Fonts\arial.ttf",
-        "/usr/share/fonts/truetype/liberation/" + name,
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/Library/Fonts/Arial Bold.ttf" if bold else "/Library/Fonts/Arial.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf",
+        os.path.join(fonts, lib),
+        "/usr/share/fonts/truetype/liberation/" + lib,
+        "/usr/share/fonts/truetype/msttcorefonts/" + ("Arial_Bold.ttf" if bold else "Arial.ttf"),
     ]
     for c in candidates:
         if os.path.exists(c):
             return c
-    raise FileNotFoundError("No font found - copy the static/fonts folder (LiberationSans-*.ttf) into the app.")
+    raise FileNotFoundError("No Arial font found - copy the static/fonts folder (LiberationSans-*.ttf) into the app.")
 
 
 def render_letterhead(st, logo_path, cert_path):
@@ -1297,15 +1301,30 @@ def render_letterhead(st, logo_path, cert_path):
     def font(path, size):
         return ImageFont.truetype(path, max(int(round(size * S)), 6))
 
-    tsize = 38.0
-    if title and font(fb, tsize).getlength(title) / S > 470:
-        tsize *= 470 / (font(fb, tsize).getlength(title) / S)
-    dsize = 17.0
+    # Company name in the heavy "Arial Black" look of the original letterhead picture: bold Arial
+    # thickened by an outline, widened 13 % and slightly spaced (same font on every server).
+    title_img = None
+    if title:
+        tf = font(fb, 31.5)
+        layer = PILImage.new("L", (int((tf.getlength(title) * 1.2 + 40 * S) + len(title) * 2 * S), 60 * S), 0)
+        ld = ImageDraw.Draw(layer)
+        x = 10 * S
+        for ch in title:
+            ld.text((x, 10 * S), ch, font=tf, fill=255, stroke_width=S, stroke_fill=255)
+            x += tf.getlength(ch) + 1.25 * S
+        layer = layer.crop(layer.getbbox())
+        tw, th = int(layer.width * 1.13), layer.height
+        if tw > 470 * S:                                    # a long name is scaled down to fit
+            k = 470 * S / tw
+            tw, th = int(tw * k), max(int(th * k), 1)
+        title_img = layer.resize((tw, th), PILImage.LANCZOS)
+    title_top = 7
+    dsize = 16.7
     widest = max([font(fb if b else fr, dsize).getlength(t) / S for t, b in lines] or [1])
     if widest > 400:
         dsize *= 400 / widest
-    step = dsize * 1.32
-    top_text = 6 + (tsize * 0.95 if title else 0) + (12 if title else 6)
+    step = dsize * 1.26
+    top_text = title_top + title_img.height / S + 16 if title_img else 12
     text_bottom = top_text + step * len(lines) + 4
     logo = PILImage.open(logo_path).convert("RGB")
     cert = PILImage.open(cert_path).convert("RGB")
@@ -1318,14 +1337,15 @@ def render_letterhead(st, logo_path, cert_path):
     H = int(max(text_bottom, logo.height / S, cert.height / S, 160) + 8)
     # the title may reach over the certification box: keep the box below the title's letters
     cert_min_y = 0
-    if title and cx + font(fb, tsize).getlength(title) / S / 2 > 949 - cert.width / S - 6:
-        cert_min_y = 4 + tsize * 1.08 + 4
+    if title_img and cx + title_img.width / S / 2 > 949 - cert.width / S - 6:
+        cert_min_y = title_top + title_img.height / S + 6
     cert_y = max((H * S - cert.height) // 2, int(cert_min_y * S))
     H = int(max(H, cert_y / S + cert.height / S + 8))
     canvas = PILImage.new("RGB", (W * S, H * S), "white")
     d = ImageDraw.Draw(canvas)
-    if title:
-        d.text((cx * S, 4 * S), title, font=font(fb, tsize), fill="#0b2a63", anchor="ma")     # dark blue company name
+    if title_img:                                                                         # dark blue company name
+        canvas.paste(PILImage.new("RGB", title_img.size, "#0b2a63"),
+                     (cx * S - title_img.width // 2, title_top * S), title_img)
     y = top_text
     for t, b in lines:
         d.text((cx * S, y * S), t, font=font(fb if b else fr, dsize), fill="#1a3d80", anchor="ma")   # blue details
@@ -1348,7 +1368,7 @@ def letterhead_file(db=None):
         st = letterhead_settings(db)
         lp, cp = lh_image_path("logo"), lh_image_path("cert")
         sig = json.dumps([st, os.path.getmtime(lp), os.path.getsize(lp), os.path.getmtime(cp),
-                          os.path.getsize(cp), "v3"], sort_keys=True)
+                          os.path.getsize(cp), find_font(True), find_font(False), "v5"], sort_keys=True)
         cache = os.path.join(LETTERHEAD_DIR, "cache")
         path = os.path.join(cache, "hdr_" + hashlib.sha1(sig.encode()).hexdigest()[:16] + ".png")
         if not os.path.exists(path):
