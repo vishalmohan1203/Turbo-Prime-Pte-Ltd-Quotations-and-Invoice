@@ -1,0 +1,11 @@
+{% macro flow(steps) %}
+<nav class="flow" aria-label="Document flow">
+  {% for s in steps %}
+    {% if s.url %}<a class="step{{ ' cur' if s.cur }}{{ ' done' if s.done }}" href="{{ s.url }}">
+    {% else %}<span class="step todo{{ ' cur' if s.cur }}">{% endif %}
+      <b>{{ loop.index }}. {{ s.label }}</b><small>{{ s.sub }}</small>
+    {% if s.url %}</a>{% else %}</span>{% endif %}
+    {% if not loop.last %}<span class="arrow">→</span>{% endif %}
+  {% endfor %}
+</nav>
+{% endmacro %}
