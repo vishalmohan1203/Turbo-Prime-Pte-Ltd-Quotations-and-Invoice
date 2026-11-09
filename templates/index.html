@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <div class="toolbar">
+    <h2 style="margin:0">Quotations</h2>
+    <form method="get" style="display:flex;gap:8px;max-width:360px;width:100%">
+      <input name="q" value="{{ search }}" placeholder="Search number, customer, ref, job order…">
+      <button class="btn sec" type="submit">Search</button>
+    </form>
+    <a class="btn" href="{{ url_for('new') }}">+ New Quotation</a>
+  </div>
+  {% if rows %}
+  <table>
+    <thead><tr><th>Quotation no</th><th>Date</th><th>To</th><th class="num">Total</th><th>Actions</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td><a href="{{ url_for('view', qid=r['id']) }}"><strong>{{ r['quote_no'] }}</strong></a></td>
+        <td>{{ r['q_date']|dmy }}</td>
+        <td>{{ r['to_address'].splitlines()[0] if r['to_address'] else '' }}</td>
+        <td class="num" style="white-space:nowrap">{{ r['currency'] }} {{ r['total']|money }}</td>
+        <td><div class="actions">
+          <a class="btn sm" href="{{ url_for('pdf', qid=r['id']) }}" target="_blank">PDF</a>
+          {% if not r['jo_no'] %}
+          <a class="btn sm sec" href="{{ url_for('accept', qid=r['id']) }}">Accepted</a>
+          <a class="btn sm sec" href="{{ url_for('edit', qid=r['id']) }}">Edit</a>
+          {% endif %}
+          <a class="btn sm sec" href="{{ url_for('duplicate', qid=r['id']) }}">Duplicate</a>
+          <form method="post" action="{{ url_for('delete', qid=r['id']) }}" onsubmit="return confirm('Delete quotation {{ r['quote_no'] }}? This cannot be undone.')">
+            <button class="btn sm danger" type="submit">Delete</button>
+          </form>
+        </div></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">No quotations yet. Click <strong>+ New Quotation</strong> to create the first one.</p>
+  {% endif %}
+</div>
+{% endblock %}

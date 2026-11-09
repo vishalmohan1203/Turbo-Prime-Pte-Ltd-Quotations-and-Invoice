@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}T&amp;C Options{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Terms &amp; Conditions options <span class="badge">Administrator only</span></h2>
+  <p class="muted" style="margin-top:0">These three options appear on the quotation form; the person making the quotation picks the one that suits it and can still edit the text for that quotation. Edit the name and the wording here, one term per line. Changes apply to new quotations &mdash; existing quotations keep their own terms.</p>
+  <p class="muted" style="margin-bottom:0">Placeholders filled in automatically: <code>{currency}</code> (quotation currency), <code>{delivery}</code> (delivery time), <code>{delivery_term}</code> (e.g. Exw Singapore) and <code>{company}</code> (company name).</p>
+</div>
+{% for o in options %}
+<form method="post" class="card" id="{{ o['key'] }}" autocomplete="off">
+  <input type="hidden" name="key" value="{{ o['key'] }}">
+  <label for="name_{{ o['key'] }}">Option {{ loop.index }} &mdash; name</label>
+  <input id="name_{{ o['key'] }}" name="name" value="{{ o['name'] }}" maxlength="60" required style="max-width:360px">
+  <label for="body_{{ o['key'] }}" style="margin-top:12px">Terms &amp; conditions</label>
+  <textarea id="body_{{ o['key'] }}" name="body" rows="12" required>{{ o['body'] }}</textarea>
+  <p style="margin-bottom:0"><button class="btn" type="submit">Save option</button></p>
+</form>
+{% endfor %}
+{% endblock %}
