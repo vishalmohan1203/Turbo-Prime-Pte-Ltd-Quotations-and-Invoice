@@ -247,7 +247,7 @@ app.config.update(SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_HTTPONLY=True,
                   SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE") == "1",
                   PERMANENT_SESSION_LIFETIME=timedelta(days=14))
 
-PUBLIC_ENDPOINTS = {"login", "setup", "static"}
+PUBLIC_ENDPOINTS = {"login", "setup", "static", "brand_logo"}
 COMPANY_FREE_ENDPOINTS = {"company_select", "logout", "static"}
 _FAILED_LOGINS = {}                      # "ip|user" -> [timestamps]; 5 failures = 10 min lock
 _DUMMY_HASH = generate_password_hash("not-a-real-password")
@@ -3281,6 +3281,15 @@ def letterhead():
         return redirect(url_for("letterhead"))
     return render_template("letterhead.html", st=letterhead_settings(db),
                            ver=os.path.basename(letterhead_file(db)), unsaved=False)
+
+
+@app.route("/brand/logo.png")
+def brand_logo():
+    """The company logo shown in the page header: the letterhead logo uploaded on the Letterhead
+    page if there is one, otherwise the built-in default."""
+    resp = send_file(lh_image_path("logo"), mimetype="image/png")
+    resp.headers["Cache-Control"] = "max-age=300"
+    return resp
 
 
 @app.route("/letterhead/preview.png")
