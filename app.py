@@ -42,7 +42,7 @@ DATA_DIR = os.environ.get("DATA_DIR", BASE_DIR)
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "quotations.db")
 
-DO_BANNER = "Ship Spares in Transit"     # fixed bold line on the delivery order
+DO_BANNER = "Ship Spares in Transit"     # fixed bold line on the delivery order, packing list and commercial invoice
 
 # Delivery order numbers look like DO 27-0001 (DO <year>-<running no>).
 DO_PREFIX = "DO "
@@ -2041,7 +2041,8 @@ def build_export_pdf(kind, row, items):
              f"Customer PO No : {row['po_no'] or ''}"]
     left_w = (381 if K["prices"] else 345) - EXP_LEFT
     info = Table([[Paragraph("To", bold), ""],
-                  [Paragraph(txt(row["to_address"]), base), [Paragraph(txt(l), base) for l in lines]]],
+                  [Paragraph(txt(row["to_address"]), base), [Paragraph(txt(l), base) for l in lines]
+                   + [Paragraph(f"<b>{escape(DO_BANNER)}</b>", base)]]],              # bold line under the PO no
                  colWidths=[left_w, W - left_w])
     info.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
                               ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0),
@@ -2127,7 +2128,8 @@ def build_pl_pdf(row, items):
              f"PO No : {row['po_no'] or ''}"]
     text_left = 30.8
     left_w = PL_INFO_X - text_left
-    info = Table([[Paragraph(txt(row["to_address"]), base), Paragraph("<br/>".join(txt(l) for l in lines), base)]],
+    info = Table([[Paragraph(txt(row["to_address"]), base), Paragraph("<br/>".join(txt(l) for l in lines)
+                                                                 + f"<br/><b>{escape(DO_BANNER)}</b>", base)]],
                  colWidths=[left_w - 8, A4[0] - PL_INFO_X - 20])
     info.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
                               ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0),
