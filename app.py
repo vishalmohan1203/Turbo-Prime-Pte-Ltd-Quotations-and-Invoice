@@ -1527,9 +1527,6 @@ def build_job_pdf(q, items, jo):
     base = ParagraphStyle("base", fontName="Helvetica", fontSize=11, leading=14.3, textColor=NAVY)
     bold = ParagraphStyle("bold", parent=base, fontName="Helvetica-Bold", leading=12)
     desc_st = ParagraphStyle("desc_st", parent=base, leading=14)
-    # item text centred under the 'Item description' heading (centre 193 pt); the spanned spacer column
-    # 306-335 is held back on the right so short and long lines share the heading's centre
-    desc_c = ParagraphStyle("desc_c", parent=desc_st, alignment=TA_CENTER, rightIndent=29)
     title = ParagraphStyle("title", parent=bold, fontSize=16, leading=19, alignment=TA_CENTER)
     ctr = ParagraphStyle("ctr", parent=base, alignment=TA_CENTER)
     head_c = ParagraphStyle("head_c", parent=bold, alignment=TA_CENTER)
@@ -1559,7 +1556,7 @@ def build_job_pdf(q, items, jo):
     cw = [50, 226, 29, W - 305]
     rows = [[Paragraph("#", bold), Paragraph("Item description", head_c), "", Paragraph("Quantity", head_c)]]
     for it in items:
-        rows.append([Paragraph(txt(it["sno"]), desc_st), Paragraph(rich(it["description"]), desc_c), "",
+        rows.append([Paragraph(txt(it["sno"]), desc_st), Paragraph(rich(it["description"]), desc_st), "",
                      Paragraph(fmt_qty(it["qty"]), ctr)])
     t = Table(rows, colWidths=cw, repeatRows=1)
     style = [("BOX", (0, 0), (-1, 0), 0.8, colors.black), ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -1661,13 +1658,12 @@ def build_pdf(q, items, jo=None, do=None):
                     Paragraph("Part No", head_c), Paragraph("Quantity", head_c)]]
         for it in items:
             do_rows.append([para(it["sno"]), Paragraph(rich(it["description"]), desc_st),
-                            para(it["part_no"], ctr), para(fmt_qty(it["qty"]), right)])
+                            para(it["part_no"], ctr), para(fmt_qty(it["qty"]), ctr)])
         do_t = Table(do_rows, colWidths=[9 * mm, 101 * mm, 35 * mm, 30 * mm], repeatRows=1)
         do_t.setStyle(TableStyle([
             ("BOX", (0, 0), (-1, 0), 0.8, colors.black),                 # header box only, no column lines
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-            ("RIGHTPADDING", (-1, 1), (-1, -1), 4),
         ]))
         sign = Table([[Paragraph("Authorised Signature", base),
                        Paragraph("Customer's chop and signature", right)]],
