@@ -1554,7 +1554,7 @@ def build_job_pdf(q, items, jo):
 
     # '#' 30-80 | description 80-306 (header centred at 193) | spacer 306-335 | quantity 335-565 (centred at 450)
     cw = [50, 226, 29, W - 305]
-    rows = [[Paragraph("#", bold), Paragraph("Item description", head_c), "", Paragraph("Quantity", head_c)]]
+    rows = [[Paragraph("#", bold), Paragraph("Item description", bold), "", Paragraph("Quantity", head_c)]]
     for it in items:
         rows.append([Paragraph(txt(it["sno"]), desc_st), Paragraph(rich(it["description"]), desc_st), "",
                      Paragraph(fmt_qty(it["qty"]), ctr)])
