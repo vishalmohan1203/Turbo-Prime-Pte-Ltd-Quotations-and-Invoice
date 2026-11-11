@@ -639,7 +639,9 @@ CREATE TABLE IF NOT EXISTS delivery_orders (
     subtotal        TEXT NOT NULL DEFAULT '0',
     discount_amt    TEXT NOT NULL DEFAULT '0',
     total           TEXT NOT NULL DEFAULT '0',
-    created_at      TEXT NOT NULL
+    created_at      TEXT NOT NULL,
+    to_address      TEXT,
+    tc_type         TEXT
 );
 CREATE TABLE IF NOT EXISTS delivery_items (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -876,7 +878,10 @@ def init_db():
                                 ("quotations", "terms_type", "TEXT NOT NULL DEFAULT ''"),
                                 ("job_orders", "vessel_name", "TEXT NOT NULL DEFAULT ''"),
                                 ("invoices", "bank_currency", "TEXT NOT NULL DEFAULT ''"),
-                                ("invoices", "to_address", "TEXT NOT NULL DEFAULT ''")):
+                                ("invoices", "to_address", "TEXT NOT NULL DEFAULT ''"),
+                                # a delivery order's own editable To address / TC type (NULL = the quotation's)
+                                ("delivery_orders", "to_address", "TEXT"),
+                                ("delivery_orders", "tc_type", "TEXT")):
             if col not in [r[1] for r in db.execute(f"PRAGMA table_info({table})")]:
                 db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
         # purchase orders can now stand alone (no job order) and carry their own company
@@ -2836,7 +2841,12 @@ def load_delivery(db, did):
     if d is None:
         abort(404)
     jo = db.execute("SELECT * FROM job_orders WHERE id = ?", (d["job_id"],)).fetchone()
-    q = db.execute("SELECT * FROM quotations WHERE id = ?", (jo["quotation_id"],)).fetchone()
+    q = dict(db.execute("SELECT * FROM quotations WHERE id = ?", (jo["quotation_id"],)).fetchone())
+    # the delivery order's own To address / TC type, once edited on the delivery order, replace the
+    # quotation's everywhere the delivery order is shown (page, PDF, new tax invoices)
+    for col in ("to_address", "tc_type"):
+        if d[col] is not None:
+            q[col] = d[col]
     items = db.execute("SELECT * FROM delivery_items WHERE delivery_id = ? ORDER BY sno", (did,)).fetchall()
     return d, jo, q, items
 
@@ -2926,13 +2936,14 @@ def deliver(jid):
 def deliveries():
     db = get_db()
     search = request.args.get("q", "").strip()
-    sql = ("SELECT d.*, j.jo_no, q.to_address, q.currency "
+    sql = ("SELECT d.*, j.jo_no, COALESCE(d.to_address, q.to_address) AS to_address, q.currency "
            "FROM delivery_orders d "
            "JOIN job_orders j ON j.id = d.job_id JOIN quotations q ON q.id = j.quotation_id "
            "WHERE q.company = ?")
     args = [active_company()["key"]]
     if search:
-        sql += (" AND (d.do_no LIKE ? OR j.jo_no LIKE ? OR d.po_number LIKE ? OR q.to_address LIKE ? "
+        sql += (" AND (d.do_no LIKE ? OR j.jo_no LIKE ? OR d.po_number LIKE ? "
+                "OR COALESCE(d.to_address, q.to_address) LIKE ? "
                 "OR d.vessel_name LIKE ? OR d.shipper_name LIKE ?)")
         args += [f"%{search}%"] * 6
     rows = db.execute(sql + " ORDER BY d.id DESC", args).fetchall()
@@ -2956,6 +2967,10 @@ def delivery_view(did):
             errors.append(f"Delivery order number {do_no} already exists.")
         if not valid_iso(do_date):
             errors.append("Choose the delivery order date.")
+        to_addr = clean_address(request.form.get("to_address", ""))
+        if not to_addr:
+            errors.append("Enter the To address.")
+        tc_type = request.form.get("tc_type", "").strip()
         new_items = parse_do_lines(request.form, errors)
         po = request.form.get("po_number", "").strip()
         shipper = request.form.get("shipper_name", "").strip()
@@ -2964,7 +2979,11 @@ def delivery_view(did):
             old_po = d["po_number"]
             db.execute(
                 "UPDATE delivery_orders SET do_no = ?, do_date = ?, po_number = ?, shipper_name = ?, "
-                "vessel_name = ? WHERE id = ?", (do_no, do_date, po, shipper, vessel, did))
+                "vessel_name = ?, to_address = ?, tc_type = ? WHERE id = ?",
+                (do_no, do_date, po, shipper, vessel, to_addr, tc_type, did))
+            remember_address(db, to_addr)
+            if tc_type:
+                db.execute("INSERT OR IGNORE INTO tc_types (name) VALUES (?)", (tc_type,))
             save_delivery_items(db, did, new_items)
             msg = "Delivery order saved."
             if po != old_po:
@@ -2980,13 +2999,20 @@ def delivery_view(did):
             flash(e, "err")
         shown = dict(d)
         shown.update(do_no=do_no, do_date=do_date, po_number=po, shipper_name=shipper, vessel_name=vessel)
+        q.update(to_address=request.form.get("to_address", ""), tc_type=tc_type)
         item_list = [{"description": x, "part_no": pn, "qty": a} for x, pn, a in
                      zip(request.form.getlist("description"), request.form.getlist("part_no"),
                          request.form.getlist("qty"))]
         return render_template("do_view.html", dlv=shown, jo=jo, q=q, items=item_list or [{}],
-                               invoices=delivery_invoices(db, did))
+                               invoices=delivery_invoices(db, did), **do_pickers(db))
     return render_template("do_view.html", dlv=dict(d), jo=jo, q=q, items=[dict(i) for i in items],
-                           invoices=delivery_invoices(db, did))
+                           invoices=delivery_invoices(db, did), **do_pickers(db))
+
+
+def do_pickers(db):
+    """Saved addresses and TC types offered on the delivery order page."""
+    return {"customers": saved_addresses(db),
+            "tc_types": [t["name"] for t in db.execute("SELECT name FROM tc_types ORDER BY name COLLATE NOCASE")]}
 
 
 @app.route("/delivery/<int:did>/pdf")
