@@ -15,8 +15,17 @@
     </div>
     <p class="muted" style="margin-top:0">Save your changes first, then download the PDF - the PDF shows the saved delivery order.</p>
     <div class="grid">
-      <div><label>To</label><div style="white-space:pre-line">{{ q['to_address'] }}</div>
-        <div style="height:10px"></div><label>TC Type</label>{{ q['tc_type'] or '—' }}</div>
+      <div><label for="saved_address">To (name &amp; address) *</label>
+        <select id="saved_address" style="margin-bottom:6px">
+          <option value="">— pick a saved address, or edit below —</option>
+          {% for c in customers %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+        </select>
+        <textarea id="to_address" name="to_address" rows="5" required>{{ q['to_address'] }}</textarea>
+        <div style="height:10px"></div>
+        <label for="tc_type">TC Type</label>
+        <input id="tc_type" name="tc_type" value="{{ q['tc_type'] or '' }}" list="tcList">
+        <datalist id="tcList">{% for t in tc_types %}<option value="{{ t }}">{% endfor %}</datalist>
+        <div class="muted" style="font-size:12px">Changes here apply to this delivery order only, not the quotation or job order.</div></div>
       <div>
         <label for="do_no">Delivery order no (automatic - editable)</label>
         <input id="do_no" name="do_no" value="{{ dlv.do_no }}" maxlength="30" required>
@@ -81,6 +90,10 @@
 </form>
 
 <script>
+document.getElementById('saved_address').addEventListener('change', e => {
+  const c = {{ customers|tojson }}.find(x => String(x.id) === e.target.value);
+  if (c) document.getElementById('to_address').value = c.address;
+});
 const initialItems = {{ items|tojson }};
 const tbody = document.querySelector('#items tbody');
 function esc(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
