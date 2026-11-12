@@ -101,6 +101,27 @@
   {% block content %}{% endblock %}
 </main>
 <script>
+// item tables: Tab from the last box of a row goes straight to the next row's first box (past the
+// remove button); from the last row, once something is typed in it, it adds a new item row first
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+  const tr = e.target.closest && e.target.closest('#items tbody tr');
+  if (!tr) return;
+  const boxes = r => [...r.querySelectorAll('input, textarea, select')]
+    .filter(el => el.type !== 'hidden' && !el.readOnly && !el.disabled && el.tabIndex !== -1);
+  const mine = boxes(tr);
+  if (e.target !== mine[mine.length - 1]) return;
+  let next = tr.nextElementSibling;
+  if (!next) {
+    const add = document.getElementById('addRow');
+    if (!add || !mine.some(el => el.value.trim())) return;     // empty last row: Tab works as usual
+    add.click();
+    next = tr.parentElement.lastElementChild;
+    if (next === tr) return;
+  }
+  const first = boxes(next)[0];
+  if (first) { e.preventDefault(); first.focus(); }
+});
 // header menus: clicking elsewhere (or opening another menu) closes an open one
 document.addEventListener('click', e => {
   document.querySelectorAll('header details.menu[open]').forEach(d => { if (!d.contains(e.target)) d.removeAttribute('open'); });
