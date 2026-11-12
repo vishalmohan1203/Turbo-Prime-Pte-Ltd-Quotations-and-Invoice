@@ -19,7 +19,7 @@ import time
 from functools import wraps
 from urllib.parse import urlparse
 
-from flask import (Flask, abort, flash, g, redirect, render_template, request,
+from flask import (Flask, abort, flash, g, has_app_context, redirect, render_template, request,
                    send_file, session, url_for)
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -883,7 +883,9 @@ def init_db():
                                 # a delivery order's own editable To address / TC type (NULL = the quotation's)
                                 ("delivery_orders", "to_address", "TEXT"),
                                 ("delivery_orders", "tc_type", "TEXT"),
-                                ("purchase_orders", "remarks", "TEXT NOT NULL DEFAULT ''")):
+                                ("purchase_orders", "remarks", "TEXT NOT NULL DEFAULT ''"),
+                                # "Save as Draft": unfinished documents (1) that can be resumed later
+                                *((t, "is_draft", "INTEGER NOT NULL DEFAULT 0") for t in DRAFT_TABLES)):
             if col not in [r[1] for r in db.execute(f"PRAGMA table_info({table})")]:
                 db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
         # purchase orders can now stand alone (no job order) and carry their own company
@@ -1120,8 +1122,9 @@ def parse_form(form, qid=None):
 
 
 def save_quotation(db, data, items, qid=None):
+    data.setdefault("is_draft", 0)
     cols = ("to_address", "q_date", "valid_till", "your_ref", "tc_type", "vessel_name", "currency",
-            "delivery_time", "remarks", "discount_type", "terms", "terms_type")
+            "delivery_time", "remarks", "discount_type", "terms", "terms_type", "is_draft")
     dec = ("discount_value", "subtotal", "discount_amt", "total")
     vals = [data[c] for c in cols] + [str(data[c]) for c in dec]
 
@@ -1482,6 +1485,25 @@ class _PageGap(Spacer):
         return avail_w, min(self.first if getattr(self.doc, "page", 0) <= 1 else self.other, max(avail_h, 0))
 
 
+def _draft_mark(canv, _doc):
+    """Large light 'DRAFT' across every page of a draft document's PDF."""
+    if not (has_app_context() and g.get("pdf_draft")):
+        return
+    w, h = canv._pagesize
+    canv.saveState()
+    canv.setFillColor(colors.Color(0.55, 0.55, 0.6, alpha=0.22))
+    canv.setFont("Helvetica-Bold", 120)
+    canv.translate(w / 2, h / 2)
+    canv.rotate(45)
+    canv.drawCentredString(0, -40, "DRAFT")
+    canv.restoreState()
+
+
+def pdf_for(row):
+    """Called by each PDF route: a draft document's PDF carries the DRAFT watermark."""
+    g.pdf_draft = bool(row["is_draft"])
+
+
 def make_doc(buf, pagesize, left_m, right_m, top_m, bottom_m, company, title, hw=None, hleft=0):
     """Document template shared by all PDFs. Page 1 starts with the letterhead (the first flowable of the
     story, returned as `hdr`); every following page gets the same letterhead drawn at the same place and its
@@ -1509,8 +1531,9 @@ def make_doc(buf, pagesize, left_m, right_m, top_m, bottom_m, company, title, hw
         canv.drawImage(ImageReader(io.BytesIO(data)), hx, hy, width=hdr_w, height=hdr_h, mask="auto")
 
     doc.addPageTemplates([
-        PageTemplate(id="first", frames=[Frame(left_m, bottom_m, doc.width, PH - top_m - bottom_m, id="f1")]),
-        PageTemplate(id="later", onPage=draw_letterhead,
+        PageTemplate(id="first", onPageEnd=_draft_mark,
+                     frames=[Frame(left_m, bottom_m, doc.width, PH - top_m - bottom_m, id="f1")]),
+        PageTemplate(id="later", onPage=draw_letterhead, onPageEnd=_draft_mark,
                      frames=[Frame(left_m, bottom_m, doc.width, (hy - 14 + 6) - bottom_m, id="f2")]),
     ])
     return doc, hdr, hdr_h
@@ -1720,8 +1743,9 @@ def build_quotation_pdf(q, items):
                        width=hw, height=hdr_h, mask="auto")
 
     doc.addPageTemplates([
-        PageTemplate(id="first", frames=[Frame(left_m, bottom_m, doc.width, doc.height, id="f1")]),
-        PageTemplate(id="later", onPage=draw_letterhead,
+        PageTemplate(id="first", onPageEnd=_draft_mark,
+                     frames=[Frame(left_m, bottom_m, doc.width, doc.height, id="f1")]),
+        PageTemplate(id="later", onPage=draw_letterhead, onPageEnd=_draft_mark,
                      frames=[Frame(left_m, bottom_m, doc.width, later_top - bottom_m, id="f2")]),
     ])
     cur = q["currency"]
@@ -2252,6 +2276,46 @@ def save_job_items(db, jid, items):
           str(it["line_total"])) for n, it in enumerate(items, start=1)])
 
 
+DRAFT_TABLES = ("quotations", "job_orders", "delivery_orders", "invoices", "purchase_orders",
+                "commercial_invoices", "packing_lists")
+
+
+def saving_draft(current_is_draft=True):
+    """True when the 'Save as Draft' button was pressed - only for a new document or one that is still a
+    draft (a finalised document is not turned back into a draft)."""
+    return request.form.get("save_as") == "draft" and bool(current_is_draft)
+
+
+def draft_errors(errors):
+    """A draft is saved with whatever has been typed so far. Only problems with the document number
+    stop it (the number must still be unique); everything else is checked when it is finalised."""
+    def number_problem(e):
+        return ("already exists" in e or "is too long" in e or "number cannot be empty" in e
+                or (e.startswith("Type the") and e.endswith(" number.")) or e == QUOTE_NO_ERR)
+    return [e for e in errors if number_problem(e)]
+
+
+def draft_saved(label, errors):
+    """Flash 'saved as draft' with what is still missing before it can be finalised."""
+    todo = [e for e in errors if e not in draft_errors(errors)]
+    msg = f"{label} saved as a draft - open it any time to continue."
+    if todo:
+        msg += " Still to complete before finalising: " + " ".join(todo[:4]) + (" ..." if len(todo) > 4 else "")
+    flash(msg, "ok")
+
+
+def draft_date(value):
+    return value if valid_iso(value) else date.today().isoformat()
+
+
+def blocked_by_draft(row, what, back):
+    """Next documents are only made from finalised ones."""
+    if row["is_draft"]:
+        flash(f"{what} is still a draft. Finalise it (open it and click Save) before creating the next document.", "err")
+        return redirect(back)
+    return None
+
+
 def valid_iso(text):
     try:
         datetime.strptime(text, "%Y-%m-%d")
@@ -2312,14 +2376,30 @@ def blank_form():
             "quote_no": next_quote_no(get_db())}
 
 
+def quotation_draft(data, errors):
+    """'Save as Draft' on a quotation: keep what was typed, fill only what the database needs."""
+    data["is_draft"] = 1
+    data["q_date"] = draft_date(data["q_date"])
+    if data["currency"] not in CURRENCIES:
+        data["currency"] = active_company()["currency"]
+    return draft_errors(errors)
+
+
 @app.route("/new", methods=["GET", "POST"])
 def new():
     db = get_db()
     if request.method == "POST":
         data, items, errors = parse_form(request.form)
         data["company"] = active_company()["key"]
+        draft = saving_draft()
+        all_errors = list(errors)
+        if draft:
+            errors = quotation_draft(data, errors)
         if not errors:
             qid = save_quotation(db, data, items)
+            if draft:
+                draft_saved("Quotation", all_errors)
+                return redirect(url_for("edit", qid=qid))
             flash("Quotation saved.", "ok")
             return redirect(url_for("view", qid=qid))
         for e in errors:
@@ -2357,15 +2437,23 @@ def edit(qid):
         return redirect(url_for("view", qid=qid))
     if request.method == "POST":
         data, new_items, errors = parse_form(request.form, qid)
+        draft = saving_draft(q["is_draft"])
+        all_errors = list(errors)
+        if draft:
+            errors = quotation_draft(data, errors)
         if not errors:
             save_quotation(db, data, new_items, qid=qid)
-            flash("Quotation updated.", "ok")
+            if draft:
+                draft_saved("Quotation", all_errors)
+                return redirect(url_for("edit", qid=qid))
+            flash("Quotation finalised." if q["is_draft"] else "Quotation updated.", "ok")
             return redirect(url_for("view", qid=qid))
         for e in errors:
             flash(e, "err")
         form = {k: request.form.get(k, "") for k in blank_form()}
         form["discount_value"] = request.form.get("discount_value", "0")
         item_list = quote_items_from_form(request.form)
+        form["is_draft"] = q["is_draft"]
         return render_template("form.html", q=form, items=item_list or [{}],
                                editing=True, qid=qid, currencies=CURRENCIES, **masters_ctx())
     return render_template("form.html", q=dict(q), items=[dict(i) for i in items],
@@ -2399,6 +2487,7 @@ def quote_renumber(qid):
 @app.route("/pdf/<int:qid>")
 def pdf(qid):
     q, items = load_quotation(get_db(), qid)
+    pdf_for(q)
     buf = build_pdf(q, items)
     return send_file(buf, mimetype="application/pdf",
                      as_attachment=request.args.get("download") == "1",
@@ -2414,6 +2503,9 @@ def accept(qid):
     if existing:
         flash(f"This quotation is already job order {existing['jo_no']}.", "ok")
         return redirect(url_for("job_view", jid=existing["id"]))
+    stop = blocked_by_draft(q, f"Quotation {q['quote_no']}", url_for("view", qid=qid))
+    if stop:
+        return stop
     form = {"jo_date": date.today().isoformat(), "po_number": "", "jo_no": "", "suggested": ""}
     if request.method == "POST":
         form = {"jo_date": request.form.get("jo_date", "").strip(),
@@ -2421,6 +2513,9 @@ def accept(qid):
                 "jo_no": request.form.get("jo_no", "").strip(),
                 "suggested": request.form.get("suggested_no", "").strip()}
         custom = bool(form["jo_no"]) and form["jo_no"] != form["suggested"]
+        draft = saving_draft()
+        if draft:
+            form["jo_date"] = draft_date(form["jo_date"])
         if not valid_iso(form["jo_date"]):
             flash("Choose the job order date.", "err")
         elif len(form["jo_no"]) > 30:
@@ -2433,12 +2528,12 @@ def accept(qid):
                 try:
                     cur = db.execute(
                         "INSERT INTO job_orders (jo_no, quotation_id, jo_date, po_number, vessel_name, remarks, "
-                        "discount_type, discount_value, subtotal, discount_amt, total, created_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "discount_type, discount_value, subtotal, discount_amt, total, created_at, is_draft) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (no, qid, form["jo_date"], form["po_number"], q["vessel_name"] or "", q["remarks"] or "",
                          q["discount_type"], q["discount_value"], q["subtotal"],
                          q["discount_amt"], q["total"],
-                         datetime.now().isoformat(timespec="seconds")))
+                         datetime.now().isoformat(timespec="seconds"), int(draft)))
                     jid = cur.lastrowid
                     db.executemany(
                         "INSERT INTO job_items (job_id, sno, description, part_no, qty, unit_price, line_total) "
@@ -2446,8 +2541,8 @@ def accept(qid):
                         [(jid, i["sno"], i["description"], i["part_no"], i["qty"], i["unit_price"], i["line_total"])
                          for i in items])
                     db.commit()
-                    flash(f"Quotation {q['quote_no']} accepted. Job order {no} created - "
-                          "you can edit the items below if needed.", "ok")
+                    flash(f"Quotation {q['quote_no']} accepted. Job order {no} created"
+                          + (" as a draft" if draft else "") + " - you can edit the items below if needed.", "ok")
                     return redirect(url_for("job_view", jid=jid))
                 except sqlite3.IntegrityError:
                     db.rollback()
@@ -2540,20 +2635,27 @@ def job_view(jid):
         remarks = request.form.get("remarks", "").strip()
         po = request.form.get("po_number", "").strip()
         vessel = request.form.get("vessel_name", "").strip()
+        draft = saving_draft(jo["is_draft"])
+        all_errors = list(errors)
+        if draft:
+            errors, jo_date = draft_errors(errors), draft_date(jo_date)
         if not errors:
             old_po = jo["po_number"]
             db.execute(
                 "UPDATE job_orders SET jo_no = ?, jo_date = ?, po_number = ?, vessel_name = ?, remarks = ?, "
-                "discount_type = ?, discount_value = ?, subtotal = ?, discount_amt = ?, total = ? "
+                "discount_type = ?, discount_value = ?, subtotal = ?, discount_amt = ?, total = ?, is_draft = ? "
                 "WHERE id = ?",
                 (jo_no, jo_date, po, vessel, remarks, m["discount_type"], str(m["discount_value"]),
-                 str(m["subtotal"]), str(m["discount_amt"]), str(m["total"]), jid))
+                 str(m["subtotal"]), str(m["discount_amt"]), str(m["total"]), int(draft), jid))
             save_job_items(db, jid, new_items)
-            msg = "Job order saved."
+            msg = "Job order finalised." if jo["is_draft"] and not draft else "Job order saved."
             if po != old_po:
                 msg += " " + propagate_job_po(db, jid, old_po, po)
             db.commit()
-            flash(msg, "ok")
+            if draft:
+                draft_saved("Job order", all_errors)
+            else:
+                flash(msg, "ok")
             return redirect(url_for("job_view", jid=jid))
         for e in errors:
             flash(e, "err")
@@ -2588,6 +2690,7 @@ def job_delete(jid):
 @app.route("/job/<int:jid>/pdf")
 def job_pdf(jid):
     jo, q, items = load_job(get_db(), jid)
+    pdf_for(jo)
     buf = build_pdf(q, items, jo=jo)
     return send_file(buf, mimetype="application/pdf",
                      as_attachment=request.args.get("download") == "1",
@@ -2733,29 +2836,38 @@ def po_new(jid):
     else:
         jo, q, _jitems = load_job(db, jid)
     blank = {"id": None, "po_no": "", "po_date": "", "to_address": "", "your_ref": "", "jo_ref": "",
-             "tc_type": "", "currency": "", "gst_rate": "0", "remarks": ""}
+             "tc_type": "", "currency": "", "gst_rate": "0", "remarks": "", "is_draft": 0}
     if request.method == "POST":
         f = request.form
         h = po_form_fields(f)
         errors = po_form_errors(db, h)
         items, m = parse_po(f, errors)
+        draft = saving_draft()
+        all_errors = list(errors)
+        if draft:
+            errors, h["po_date"] = draft_errors(errors), draft_date(h["po_date"])
         if not errors:
             try:
                 cur = db.execute(
                     "INSERT INTO purchase_orders (po_no, job_id, po_date, to_address, your_ref, jo_ref, tc_type, "
-                    "currency, subtotal, gst_rate, gst_amt, total, created_at, company, remarks) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "currency, subtotal, gst_rate, gst_amt, total, created_at, company, remarks, is_draft) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (h["po_no"], jid, h["po_date"], h["to_address"], h["your_ref"], h["jo_ref"], h["tc_type"],
                      m["currency"], str(m["subtotal"]), str(m["gst_rate"]), str(m["gst_amt"]), str(m["total"]),
-                     datetime.now().isoformat(timespec="seconds"), q["company"], h["remarks"]))
+                     datetime.now().isoformat(timespec="seconds"), q["company"], h["remarks"], int(draft)))
             except sqlite3.IntegrityError:      # someone saved the same number a moment ago
                 db.rollback()
                 errors.append(f"Purchase order number {h['po_no']} already exists.")
             else:
                 pid = cur.lastrowid
                 save_po_items(db, pid, items)
-                remember_address(db, h["to_address"])
+                if h["to_address"]:
+                    remember_address(db, h["to_address"])
                 db.commit()
-                flash(f"Purchase order {h['po_no']} saved.", "ok")
+                if draft:
+                    draft_saved(f"Purchase order {h['po_no']}", all_errors)
+                else:
+                    flash(f"Purchase order {h['po_no']} saved.", "ok")
                 return redirect(url_for("po_view", pid=pid))
         for e in errors:
             flash(e, "err")
@@ -2793,21 +2905,30 @@ def po_view(pid):
         h = po_form_fields(f)
         errors = po_form_errors(db, h, pid)
         new_items, m = parse_po(f, errors)
+        draft = saving_draft(po["is_draft"])
+        all_errors = list(errors)
+        if draft:
+            errors, h["po_date"] = draft_errors(errors), draft_date(h["po_date"])
         if not errors:
             try:
                 db.execute("UPDATE purchase_orders SET po_no=?, po_date=?, to_address=?, your_ref=?, jo_ref=?, "
-                           "tc_type=?, currency=?, subtotal=?, gst_rate=?, gst_amt=?, total=?, remarks=? WHERE id=?",
+                           "tc_type=?, currency=?, subtotal=?, gst_rate=?, gst_amt=?, total=?, remarks=?, is_draft=? "
+                           "WHERE id=?",
                            (h["po_no"], h["po_date"], h["to_address"], h["your_ref"], h["jo_ref"], h["tc_type"],
                             m["currency"], str(m["subtotal"]), str(m["gst_rate"]), str(m["gst_amt"]),
-                            str(m["total"]), h["remarks"], pid))
+                            str(m["total"]), h["remarks"], int(draft), pid))
             except sqlite3.IntegrityError:
                 db.rollback()
                 errors.append(f"Purchase order number {h['po_no']} already exists.")
             else:
                 save_po_items(db, pid, new_items)
-                remember_address(db, h["to_address"])
+                if h["to_address"]:
+                    remember_address(db, h["to_address"])
                 db.commit()
-                flash("Purchase order saved.", "ok")
+                if draft:
+                    draft_saved("Purchase order", all_errors)
+                else:
+                    flash("Purchase order finalised." if po["is_draft"] else "Purchase order saved.", "ok")
                 return redirect(url_for("po_view", pid=pid))
         for e in errors:
             flash(e, "err")
@@ -2821,6 +2942,7 @@ def po_view(pid):
 @app.route("/purchase/<int:pid>/pdf")
 def po_pdf(pid):
     po, jo, q, items = load_po(get_db(), pid)
+    pdf_for(po)
     buf = build_po_pdf(q, po, items)
     return send_file(buf, mimetype="application/pdf",
                      as_attachment=request.args.get("download") == "1",
@@ -2907,6 +3029,9 @@ def deliver(jid):
     """Create a delivery order from a job order (copies the job order's saved items)."""
     db = get_db()
     jo, q, items = load_job(db, jid)
+    stop = blocked_by_draft(jo, f"Job order {jo['jo_no']}", url_for("job_view", jid=jid))
+    if stop:
+        return stop
     form = {"do_date": date.today().isoformat(), "po_number": jo["po_number"], "do_no": "", "suggested": "",
             "shipper_name": "", "vessel_name": jo["vessel_name"] or ""}
     if request.method == "POST":
@@ -2917,6 +3042,9 @@ def deliver(jid):
                 "shipper_name": request.form.get("shipper_name", "").strip(),
                 "vessel_name": request.form.get("vessel_name", "").strip()}
         custom = bool(form["do_no"]) and form["do_no"] != form["suggested"]
+        draft = saving_draft()
+        if draft:
+            form["do_date"] = draft_date(form["do_date"])
         if not valid_iso(form["do_date"]):
             flash("Choose the delivery order date.", "err")
         elif len(form["do_no"]) > 30:
@@ -2929,17 +3057,17 @@ def deliver(jid):
                 try:
                     cur = db.execute(
                         "INSERT INTO delivery_orders (do_no, job_id, do_date, po_number, shipper_name, "
-                        "vessel_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        "vessel_name, created_at, is_draft) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (no, jid, form["do_date"], form["po_number"], form["shipper_name"],
-                         form["vessel_name"], datetime.now().isoformat(timespec="seconds")))
+                         form["vessel_name"], datetime.now().isoformat(timespec="seconds"), int(draft)))
                     did = cur.lastrowid
                     db.executemany(
                         "INSERT INTO delivery_items (delivery_id, sno, description, part_no, qty, unit_price, line_total) "
                         "VALUES (?, ?, ?, ?, ?, '0', '0')",
                         [(did, i["sno"], i["description"], i["part_no"], i["qty"]) for i in items])
                     db.commit()
-                    flash(f"Delivery order {no} created from job order {jo['jo_no']} - "
-                          "edit the items below (and add part numbers) if needed.", "ok")
+                    flash(f"Delivery order {no} created from job order {jo['jo_no']}"
+                          + (" as a draft" if draft else "") + " - edit the items below (and add part numbers) if needed.", "ok")
                     return redirect(url_for("delivery_view", did=did))
                 except sqlite3.IntegrityError:
                     db.rollback()
@@ -3000,17 +3128,22 @@ def delivery_view(did):
         po = request.form.get("po_number", "").strip()
         shipper = request.form.get("shipper_name", "").strip()
         vessel = request.form.get("vessel_name", "").strip()
+        draft = saving_draft(d["is_draft"])
+        all_errors = list(errors)
+        if draft:
+            errors, do_date = draft_errors(errors), draft_date(do_date)
         if not errors:
             old_po = d["po_number"]
             db.execute(
                 "UPDATE delivery_orders SET do_no = ?, do_date = ?, po_number = ?, shipper_name = ?, "
-                "vessel_name = ?, to_address = ?, tc_type = ? WHERE id = ?",
-                (do_no, do_date, po, shipper, vessel, to_addr, tc_type, did))
-            remember_address(db, to_addr)
+                "vessel_name = ?, to_address = ?, tc_type = ?, is_draft = ? WHERE id = ?",
+                (do_no, do_date, po, shipper, vessel, to_addr or None, tc_type, int(draft), did))
+            if to_addr:
+                remember_address(db, to_addr)
             if tc_type:
                 db.execute("INSERT OR IGNORE INTO tc_types (name) VALUES (?)", (tc_type,))
             save_delivery_items(db, did, new_items)
-            msg = "Delivery order saved."
+            msg = "Delivery order finalised." if d["is_draft"] and not draft else "Delivery order saved."
             if po != old_po:
                 total_inv = len(delivery_invoices(db, did))
                 n_inv = db.execute("UPDATE invoices SET po_number = ? WHERE delivery_id = ? AND po_number = ?",
@@ -3018,7 +3151,10 @@ def delivery_view(did):
                 if total_inv:
                     msg += " " + po_change_message(old_po, po, 0, 0, n_inv, total_inv - n_inv)
             db.commit()
-            flash(msg, "ok")
+            if draft:
+                draft_saved("Delivery order", all_errors)
+            else:
+                flash(msg, "ok")
             return redirect(url_for("delivery_view", did=did))
         for e in errors:
             flash(e, "err")
@@ -3043,6 +3179,7 @@ def do_pickers(db):
 @app.route("/delivery/<int:did>/pdf")
 def delivery_pdf(did):
     d, jo, q, items = load_delivery(get_db(), did)
+    pdf_for(d)
     buf = build_pdf(q, items, do=d)
     return send_file(buf, mimetype="application/pdf",
                      as_attachment=request.args.get("download") == "1",
@@ -3181,6 +3318,9 @@ def invoice_new(did):
     the delivery order; unit prices are taken from the job order's items."""
     db = get_db()
     d, jo, q, items = load_delivery(db, did)
+    stop = blocked_by_draft(d, f"Delivery order {d['do_no']}", url_for("delivery_view", did=did))
+    if stop:
+        return stop
     pay = re.search(r"(?im)^\s*payment terms\s*:\s*(.+)$", q["terms"] or "")
     form = {"inv_date": date.today().isoformat(), "po_number": d["po_number"], "inv_no": "",
             "suggested": "", "vessel_name": d["vessel_name"], "pay_terms": pay.group(1).strip() if pay else "",
@@ -3190,6 +3330,9 @@ def invoice_new(did):
                 ("inv_date", "po_number", "inv_no", "vessel_name", "pay_terms", "location", "gst_rate")}
         form["suggested"] = request.form.get("suggested_no", "").strip()
         custom = bool(form["inv_no"]) and form["inv_no"] != form["suggested"]
+        draft = saving_draft()
+        if draft:
+            form["inv_date"] = draft_date(form["inv_date"])
         errs = []
         rate = to_decimal(form["gst_rate"] or "0", "GST %", errs)
         if rate > 100:
@@ -3200,6 +3343,9 @@ def invoice_new(did):
             errs.append("Invoice number is too long.")
         elif custom and inv_no_taken(db, form["inv_no"]):
             errs.append(f"Invoice number {form['inv_no']} already exists.")
+        if draft:
+            errs = draft_errors(errs)
+            rate = min(rate, Decimal(100))
         for e in errs:
             flash(e, "err")
         if not errs:
@@ -3231,16 +3377,17 @@ def invoice_new(did):
                     cur = db.execute(
                         "INSERT INTO invoices (inv_no, delivery_id, inv_date, po_number, vessel_name, pay_terms, "
                         "location, discount_type, discount_value, subtotal, discount_amt, gst_rate, gst_amt, "
-                        "total, bank_details, bank_currency, created_at, to_address) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "total, bank_details, bank_currency, created_at, to_address, is_draft) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (no, did, form["inv_date"], form["po_number"], form["vessel_name"], form["pay_terms"],
                          form["location"], dtype, str(dval), str(subtotal), str(disc), str(rate), str(gst),
                          str(money(taxable + gst)), get_bank_for(db, q["company"], q["currency"]),
                          default_bank_currency(db, q["company"], q["currency"]),
-                         datetime.now().isoformat(timespec="seconds"), q["to_address"]))
+                         datetime.now().isoformat(timespec="seconds"), q["to_address"], int(draft)))
                     iid = cur.lastrowid
                     save_invoice_items(db, iid, rows)
                     db.commit()
-                    msg = f"Tax invoice {no} created from delivery order {d['do_no']}."
+                    msg = f"Tax invoice {no} created from delivery order {d['do_no']}" + (" as a draft." if draft else ".")
                     if missing:
                         msg += (f" {missing} item(s) were not found on the job order (description changed) - "
                                 "please enter their unit prices.")
@@ -3307,9 +3454,14 @@ def invoice_view(iid):
         if not to_addr:
             errors.append("Type the name and address the invoice is addressed to.")
         new_items, m = parse_invoice_lines(f, errors)
+        draft = saving_draft(inv["is_draft"])
+        all_errors = list(errors)
+        if draft:
+            errors, dt = draft_errors(errors), draft_date(dt)
         if not errors:
-            db.execute("UPDATE invoices SET to_address = ? WHERE id = ?", (to_addr, iid))
-            remember_address(db, to_addr)
+            db.execute("UPDATE invoices SET to_address = ?, is_draft = ? WHERE id = ?", (to_addr, int(draft), iid))
+            if to_addr:
+                remember_address(db, to_addr)
             db.execute(
                 "UPDATE invoices SET inv_no=?, inv_date=?, po_number=?, vessel_name=?, pay_terms=?, location=?, "
                 "discount_type=?, discount_value=?, subtotal=?, discount_amt=?, gst_rate=?, gst_amt=?, total=? "
@@ -3328,7 +3480,10 @@ def invoice_view(iid):
                     db.execute("UPDATE invoices SET bank_currency = '', bank_details = ? WHERE id = ?",
                                (get_bank(db, q["company"]), iid))
             db.commit()
-            flash("Tax invoice saved.", "ok")
+            if draft:
+                draft_saved("Tax invoice", all_errors)
+            else:
+                flash("Tax invoice finalised." if inv["is_draft"] else "Tax invoice saved.", "ok")
             return redirect(url_for("invoice_view", iid=iid))
         for e in errors:
             flash(e, "err")
@@ -3353,6 +3508,7 @@ def invoice_view(iid):
 @app.route("/invoice/<int:iid>/pdf")
 def invoice_pdf(iid):
     inv, d, jo, q, items = load_invoice(get_db(), iid)
+    pdf_for(inv)
     buf = build_invoice_pdf(q, inv, items, jo["jo_no"])
     return send_file(buf, mimetype="application/pdf",
                      as_attachment=request.args.get("download") == "1",
@@ -3646,7 +3802,7 @@ def make_export_routes(kind):
         if is_new:
             row = {"id": None, K["no"]: "", K["date"]: date.today().isoformat(), "to_address": "",
                    "shipper_name": co(company)["name"], "tc_type": "", "vessel_name": "", "po_no": "",
-                   "currency": "", "dimensions": ""}
+                   "currency": "", "dimensions": "", "is_draft": 0}
             items = [{}]
         else:
             r, its = load(db, xid)
@@ -3672,10 +3828,14 @@ def make_export_routes(kind):
                 extra = {"currency": m["currency"], "total": str(m["total"])}
             else:
                 new_items, extra = parse_do_lines(f, errors), {}
+            draft = saving_draft(row.get("is_draft", 1) if not is_new else True)
+            all_errors = list(errors)
+            if draft:
+                errors, h["date"] = draft_errors(errors), draft_date(h["date"])
             if not errors:
                 cols = {K["no"]: h["no"], K["date"]: h["date"], "to_address": h["to_address"],
                         "shipper_name": h["shipper_name"], "tc_type": h["tc_type"], "vessel_name": h["vessel_name"],
-                        "po_no": h["po_no"], "dimensions": h["dimensions"], **extra}
+                        "po_no": h["po_no"], "dimensions": h["dimensions"], "is_draft": int(draft), **extra}
                 try:
                     if is_new:
                         cols.update(company=company, created_at=datetime.now().isoformat(timespec="seconds"))
@@ -3698,11 +3858,15 @@ def make_export_routes(kind):
                         else:
                             db.execute(f"INSERT INTO {itable} ({fk}, sno, description, part_no, qty) VALUES (?,?,?,?,?)",
                                        (xid, n, it["description"], it["part_no"], str(it["qty"])))
-                    remember_address(db, h["to_address"])
+                    if h["to_address"]:
+                        remember_address(db, h["to_address"])
                     if h["tc_type"]:
                         db.execute("INSERT OR IGNORE INTO tc_types (name) VALUES (?)", (h["tc_type"],))
                     db.commit()
-                    flash(f"{K['title']} {h['no']} saved.", "ok")
+                    if draft:
+                        draft_saved(f"{K['title']} {h['no']}", all_errors)
+                    else:
+                        flash(f"{K['title']} {h['no']} " + ("finalised." if row.get("is_draft") else "saved."), "ok")
                     return redirect(url_for(f"{kind}_view", xid=xid))
             for e in errors:
                 flash(e, "err")
@@ -3718,6 +3882,7 @@ def make_export_routes(kind):
 
     def pdf_view(xid):
         row, items = load(get_db(), xid)
+        pdf_for(row)
         buf = build_export_pdf(kind, row, items)
         return send_file(buf, mimetype="application/pdf", as_attachment=request.args.get("download") == "1",
                          download_name=f"{K['file']}_{row[K['no']]}.pdf")
