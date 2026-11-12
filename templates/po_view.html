@@ -72,13 +72,24 @@
           {% for c in po_currencies %}<option value="{{ c }}" {{ 'selected' if po.currency == c }}>{{ c }}</option>{% endfor %}
         </select>
         <div class="muted" style="font-size:12px">Total Price = Quantity × Unit Price. The currency is printed in the TOTAL line of the PDF.</div>
+        <div style="height:10px"></div>
+        <label for="gst_rate">GST %</label>
+        <input id="gst_rate" name="gst_rate" type="number" step="any" min="0" max="100" value="{{ po.gst_rate or 0 }}">
+        <div class="muted" style="font-size:12px">Leave 0 for no GST. When set, the PDF shows Sub Total and GST above the TOTAL.</div>
       </div>
       <div>
         <table style="margin-top:2px">
+          <tr><td>Sub Total</td><td class="num"><strong id="sumSub">0.00</strong></td></tr>
+          <tr><td>GST <span id="gstPct">0</span>%</td><td class="num" id="sumGst">0.00</td></tr>
           <tr><td><strong>Total (<span class="curr">—</span>)</strong></td><td class="num"><strong id="sumTotal" style="font-size:18px;color:var(--navy)">0.00</strong></td></tr>
         </table>
       </div>
     </div>
+  </div>
+
+  <div class="card">
+    <label for="remarks">Remarks</label>
+    <textarea id="remarks" name="remarks" rows="5" placeholder="Printed under the TOTAL on the PDF (leave empty for none)">{{ po.remarks or '' }}</textarea>
   </div>
 
   <div class="actions">
@@ -125,7 +136,12 @@ function recalc() {
     tr.querySelector('.lt').value = t ? fmt(t) : '';
     sub += t;
   });
-  document.getElementById('sumTotal').textContent = fmt(sub);
+  const rate = parseFloat(document.getElementById('gst_rate').value) || 0;
+  const gst = Math.round(sub * rate) / 100;
+  document.getElementById('sumSub').textContent = fmt(sub);
+  document.getElementById('gstPct').textContent = rate;
+  document.getElementById('sumGst').textContent = fmt(gst);
+  document.getElementById('sumTotal').textContent = fmt(sub + gst);
   document.querySelectorAll('.curr').forEach(e => e.textContent = document.getElementById('currency').value || '—');
 }
 tbody.addEventListener('input', recalc);
@@ -134,6 +150,7 @@ tbody.addEventListener('click', e => {
 });
 document.getElementById('addRow').onclick = () => addRow();
 document.getElementById('currency').addEventListener('input', recalc);
+document.getElementById('gst_rate').addEventListener('input', recalc);
 (initialItems.length ? initialItems : [{}]).forEach(addRow);
 </script>
 {% endblock %}
