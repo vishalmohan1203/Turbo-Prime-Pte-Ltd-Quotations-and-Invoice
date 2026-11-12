@@ -1979,6 +1979,12 @@ def build_po_pdf(q, po, items):
     ]))
     items_t.hAlign = "RIGHT"
     story.append(items_t)
+    if (po["remarks"] or "").strip():   # remarks right after the last item, aligned with the item table
+        rem_t = Table([[[Paragraph("Remarks:", bold), Paragraph(txt(po["remarks"].strip()), base)]]], colWidths=[TW])
+        rem_t.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 1.9), ("RIGHTPADDING", (0, 0), (-1, -1), 1.9),
+                                   ("TOPPADDING", (0, 0), (-1, -1), 12), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+        rem_t.hAlign = "RIGHT"
+        story.append(rem_t)
 
     # one boxed row: TOTAL (currency) ends at the Unit Price column edge, the amount at the right edge
     label_w = 431.0 - PO_TABLE_LEFT
@@ -2001,15 +2007,7 @@ def build_po_pdf(q, po, items):
         sums_t.hAlign = "RIGHT"
         footer_parts.append(sums_t)
     footer_parts.append(total_t)
-    rem_h = 0
-    if (po["remarks"] or "").strip():   # remarks under the TOTAL box, aligned with the item table
-        rem_t = Table([[[Paragraph("Remarks:", bold), Paragraph(txt(po["remarks"].strip()), base)]]], colWidths=[TW])
-        rem_t.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 1.9), ("RIGHTPADDING", (0, 0), (-1, -1), 1.9),
-                                   ("TOPPADDING", (0, 0), (-1, -1), 12), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
-        rem_t.hAlign = "RIGHT"
-        footer_parts.append(rem_t)
-        rem_h = rem_t.wrap(W, 800)[1]
-    footer_parts += [_PageGap(doc, max(16, NOTE_TOP - (TOTAL_TOP + th) - rem_h), 16), note]
+    footer_parts += [_PageGap(doc, max(16, NOTE_TOP - (TOTAL_TOP + th)), 16), note]
     foot_h = _stack_height(footer_parts, W)
     story += [_GapOrFill(doc, foot_h, min_gap=10 * mm), KeepTogether(footer_parts)]
     doc.build(story)
