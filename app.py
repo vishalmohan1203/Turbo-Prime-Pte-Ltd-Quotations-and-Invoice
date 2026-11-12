@@ -781,7 +781,8 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     gst_amt     TEXT NOT NULL DEFAULT '0',
     total       TEXT NOT NULL DEFAULT '0',
     created_at  TEXT NOT NULL,
-    company     TEXT NOT NULL DEFAULT ''
+    company     TEXT NOT NULL DEFAULT '',
+    remarks     TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS po_items (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -881,7 +882,8 @@ def init_db():
                                 ("invoices", "to_address", "TEXT NOT NULL DEFAULT ''"),
                                 # a delivery order's own editable To address / TC type (NULL = the quotation's)
                                 ("delivery_orders", "to_address", "TEXT"),
-                                ("delivery_orders", "tc_type", "TEXT")):
+                                ("delivery_orders", "tc_type", "TEXT"),
+                                ("purchase_orders", "remarks", "TEXT NOT NULL DEFAULT ''")):
             if col not in [r[1] for r in db.execute(f"PRAGMA table_info({table})")]:
                 db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
         # purchase orders can now stand alone (no job order) and carry their own company
@@ -1988,7 +1990,26 @@ def build_po_pdf(q, po, items):
     note = Paragraph("This computer generated and no signature is required",
                      ParagraphStyle("note", parent=base, leftIndent=101.3 - 30))
     th = total_t.wrap(W, 800)[1]
-    footer_parts = [total_t, _PageGap(doc, NOTE_TOP - (TOTAL_TOP + th), 16), note]
+    footer_parts = []
+    rate = Decimal(str(po["gst_rate"] or "0"))
+    if rate:                       # GST entered: Sub Total and GST lines just above the TOTAL box
+        sums_t = Table([[Paragraph("Sub Total", right), Paragraph(fmt_money(po["subtotal"]), right)],
+                        [Paragraph(f"GST {fmt_qty(rate)}%", right), Paragraph(fmt_money(po["gst_amt"]), right)]],
+                       colWidths=[label_w, TW - label_w])
+        sums_t.setStyle(TableStyle([("RIGHTPADDING", (0, 0), (-1, -1), 1.9), ("TOPPADDING", (0, 0), (-1, -1), 1),
+                                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
+        sums_t.hAlign = "RIGHT"
+        footer_parts.append(sums_t)
+    footer_parts.append(total_t)
+    rem_h = 0
+    if (po["remarks"] or "").strip():   # remarks under the TOTAL box, aligned with the item table
+        rem_t = Table([[[Paragraph("Remarks:", bold), Paragraph(txt(po["remarks"].strip()), base)]]], colWidths=[TW])
+        rem_t.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 1.9), ("RIGHTPADDING", (0, 0), (-1, -1), 1.9),
+                                   ("TOPPADDING", (0, 0), (-1, -1), 12), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+        rem_t.hAlign = "RIGHT"
+        footer_parts.append(rem_t)
+        rem_h = rem_t.wrap(W, 800)[1]
+    footer_parts += [_PageGap(doc, max(16, NOTE_TOP - (TOTAL_TOP + th) - rem_h), 16), note]
     foot_h = _stack_height(footer_parts, W)
     story += [_GapOrFill(doc, foot_h, min_gap=10 * mm), KeepTogether(footer_parts)]
     doc.build(story)
@@ -2652,8 +2673,13 @@ def parse_po(form, errors):
     cur = form.get("currency", "")
     if cur not in PO_CURRENCIES:
         errors.append("Choose the currency (" + " / ".join(PO_CURRENCIES) + ").")
-    total = money(sum((it["line_total"] for it in items), Decimal(0)))
-    return items, {"currency": cur, "subtotal": total, "gst_rate": Decimal(0), "gst_amt": money(0), "total": total}
+    subtotal = money(sum((it["line_total"] for it in items), Decimal(0)))
+    rate = to_decimal(form.get("gst_rate") or "0", "GST %", errors)
+    if rate > 100:
+        errors.append("GST % cannot exceed 100.")
+    gst = money(subtotal * rate / 100)
+    return items, {"currency": cur, "subtotal": subtotal, "gst_rate": rate, "gst_amt": gst,
+                   "total": money(subtotal + gst)}
 
 
 def save_po_items(db, pid, items):
@@ -2668,6 +2694,7 @@ def po_form_fields(f):
     """The typed-in header fields of a purchase order (nothing is filled in automatically)."""
     h = {k: f.get(k, "").strip() for k in ("po_no", "po_date", "your_ref", "jo_ref", "tc_type")}
     h["to_address"] = clean_address(f.get("to_address", ""))
+    h["remarks"] = f.get("remarks", "").replace("\r", "").strip()
     return h
 
 
@@ -2708,7 +2735,7 @@ def po_new(jid):
     else:
         jo, q, _jitems = load_job(db, jid)
     blank = {"id": None, "po_no": "", "po_date": "", "to_address": "", "your_ref": "", "jo_ref": "",
-             "tc_type": "", "currency": ""}
+             "tc_type": "", "currency": "", "gst_rate": "0", "remarks": ""}
     if request.method == "POST":
         f = request.form
         h = po_form_fields(f)
@@ -2718,10 +2745,10 @@ def po_new(jid):
             try:
                 cur = db.execute(
                     "INSERT INTO purchase_orders (po_no, job_id, po_date, to_address, your_ref, jo_ref, tc_type, "
-                    "currency, subtotal, gst_rate, gst_amt, total, created_at, company) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "currency, subtotal, gst_rate, gst_amt, total, created_at, company, remarks) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (h["po_no"], jid, h["po_date"], h["to_address"], h["your_ref"], h["jo_ref"], h["tc_type"],
                      m["currency"], str(m["subtotal"]), str(m["gst_rate"]), str(m["gst_amt"]), str(m["total"]),
-                     datetime.now().isoformat(timespec="seconds"), q["company"]))
+                     datetime.now().isoformat(timespec="seconds"), q["company"], h["remarks"]))
             except sqlite3.IntegrityError:      # someone saved the same number a moment ago
                 db.rollback()
                 errors.append(f"Purchase order number {h['po_no']} already exists.")
@@ -2735,7 +2762,7 @@ def po_new(jid):
         for e in errors:
             flash(e, "err")
         blank.update(h)
-        blank.update(currency=f.get("currency", ""))
+        blank.update(currency=f.get("currency", ""), gst_rate=f.get("gst_rate", "0"))
         return render_template("po_view.html", po=blank, items=po_items_from_form(f) or [{}], is_new=True,
                                **po_page_ctx(db, jo, q))
     if jo is None:                      # stand-alone: the number is filled in automatically (editable)
@@ -2771,10 +2798,10 @@ def po_view(pid):
         if not errors:
             try:
                 db.execute("UPDATE purchase_orders SET po_no=?, po_date=?, to_address=?, your_ref=?, jo_ref=?, "
-                           "tc_type=?, currency=?, subtotal=?, gst_rate=?, gst_amt=?, total=? WHERE id=?",
+                           "tc_type=?, currency=?, subtotal=?, gst_rate=?, gst_amt=?, total=?, remarks=? WHERE id=?",
                            (h["po_no"], h["po_date"], h["to_address"], h["your_ref"], h["jo_ref"], h["tc_type"],
                             m["currency"], str(m["subtotal"]), str(m["gst_rate"]), str(m["gst_amt"]),
-                            str(m["total"]), pid))
+                            str(m["total"]), h["remarks"], pid))
             except sqlite3.IntegrityError:
                 db.rollback()
                 errors.append(f"Purchase order number {h['po_no']} already exists.")
@@ -2788,7 +2815,7 @@ def po_view(pid):
             flash(e, "err")
         shown = dict(po)
         shown.update(h)
-        shown.update(currency=f.get("currency", ""))
+        shown.update(currency=f.get("currency", ""), gst_rate=f.get("gst_rate", "0"))
         return render_template("po_view.html", po=shown, items=po_items_from_form(f) or [{}], is_new=False, **ctx)
     return render_template("po_view.html", po=dict(po), items=[dict(i) for i in items], is_new=False, **ctx)
 
