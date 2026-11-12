@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ k.plural }}{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="toolbar">
+    <h2 style="margin:0">{{ k.plural }}</h2>
+    <form method="get" style="display:flex;gap:8px;max-width:360px;width:100%">
+      <input name="q" value="{{ search }}" placeholder="Search number, customer, Customer PO No., vessel…">
+      <button class="btn sec" type="submit">Search</button>
+    </form>
+    <a class="btn" href="{{ url_for(k.key ~ '_new') }}">+ New {{ k.title|lower }}</a>
+  </div>
+  {% if rows %}
+  <table>
+    <thead><tr><th>{{ k.title }} no</th><th>Date</th><th>To</th><th>Customer PO No.</th><th>Vessel</th>{% if k.prices %}<th class="num">Total</th>{% endif %}<th>Actions</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td><a href="{{ url_for(k.key ~ '_view', xid=r['id']) }}"><strong>{{ r[k.no] }}</strong></a>{% if r['is_draft'] %} <span class="draft-badge">DRAFT</span>{% endif %}</td>
+        <td>{{ r[k.date]|dmy }}</td>
+        <td>{{ r['to_address'].splitlines()[0] if r['to_address'] else '' }}</td>
+        <td>{{ r['po_no'] or '—' }}</td>
+        <td>{{ r['vessel_name'] or '—' }}</td>
+        {% if k.prices %}<td class="num" style="white-space:nowrap">{{ r['currency'] }} {{ r['total']|money }}</td>{% endif %}
+        <td><div class="actions">
+          <a class="btn sm" href="{{ url_for(k.key ~ '_pdf', xid=r['id']) }}" target="_blank">PDF</a>
+          <a class="btn sm sec" href="{{ url_for(k.key ~ '_view', xid=r['id']) }}">Open</a>
+          <form method="post" action="{{ url_for(k.key ~ '_delete', xid=r['id']) }}" onsubmit="return confirm('Are you sure you want to delete {{ k.title|lower }} {{ r[k.no] }}? This cannot be undone.')">
+            <button class="btn sm danger" type="submit">Delete</button>
+          </form>
+        </div></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">No {{ k.plural|lower }} yet. Click <strong>+ New {{ k.title|lower }}</strong> to create one.</p>
+  {% endif %}
+</div>
+{% endblock %}

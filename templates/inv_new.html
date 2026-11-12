@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}New tax invoice{% endblock %}
+{% block content %}
+<form method="post" autocomplete="off">
+  <div class="card">
+    <h2>Tax invoice for delivery order {{ d['do_no'] }}</h2>
+    <p class="muted" style="margin-top:0">Items, part numbers and quantities are copied from the delivery order; unit prices come from job order {{ jo['jo_no'] }}. On the next page you can edit everything, including the bank details.</p>
+    <div class="grid">
+      <div><label>To</label><div style="white-space:pre-line">{{ q['to_address'] }}</div></div>
+      <div><label>Items</label><span class="muted">{{ items|length }} item(s) from the delivery order</span>
+        <div style="height:10px"></div><label>TC Type</label>{{ q['tc_type'] or '—' }}</div>
+      <div>
+        <label for="inv_no">Invoice no</label>
+        <input id="inv_no" name="inv_no" value="{{ form.inv_no }}" maxlength="30" required>
+        <input type="hidden" name="suggested_no" value="{{ form.suggested }}">
+        <div class="muted" style="font-size:12px">Automatic - you can edit it.</div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="grid">
+      <div><label for="inv_date">Invoice date *</label>
+        <input type="date" id="inv_date" name="inv_date" value="{{ form.inv_date }}" required></div>
+      <div><label for="po_number">Customer PO No.</label>
+        <input id="po_number" name="po_number" value="{{ form.po_number }}"></div>
+      <div><label for="vessel_name">Vessel name</label>
+        <input id="vessel_name" name="vessel_name" value="{{ form.vessel_name }}"></div>
+      <div><label for="pay_terms">Terms</label>
+        <input id="pay_terms" name="pay_terms" value="{{ form.pay_terms }}"></div>
+      <div><label for="location">Location</label>
+        <input id="location" name="location" value="{{ form.location }}"></div>
+      <div><label for="gst_rate">GST %</label>
+        <input type="number" step="0.01" min="0" max="100" id="gst_rate" name="gst_rate" value="{{ form.gst_rate }}"></div>
+    </div>
+  </div>
+  <div class="actions">
+    <button class="btn" type="submit">Create tax invoice</button>
+    <button class="btn sec" type="submit" name="save_as" value="draft" formnovalidate>Create as Draft</button>
+    <a class="btn sec" href="{{ url_for('delivery_view', did=d['id']) }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

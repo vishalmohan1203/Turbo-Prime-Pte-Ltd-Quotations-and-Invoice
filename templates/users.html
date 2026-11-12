@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Users{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Users</h2>
+  <table>
+    <thead><tr><th>Username</th><th>Role</th><th>Created</th><th>Actions</th></tr></thead>
+    <tbody>
+    {% for u in rows %}
+      <tr>
+        <td><strong>{{ u['username'] }}</strong>{% if u['id'] == g.user['id'] %} <span class="muted">(you)</span>{% endif %}</td>
+        <td>{% if u['is_admin'] %}<span class="badge ok">Administrator</span>{% else %}<span class="badge">User</span>{% endif %}</td>
+        <td>{{ u['created_at'][:10]|dmy }}</td>
+        <td><div class="actions">
+          <form method="post" action="{{ url_for('users_password', uid=u['id']) }}" style="display:flex;gap:6px" autocomplete="off">
+            <input type="password" name="password" placeholder="New password" autocomplete="new-password" minlength="8" required style="width:160px">
+            <button class="btn sm sec" type="submit">Reset password</button>
+          </form>
+          <form method="post" action="{{ url_for('users_admin', uid=u['id']) }}">
+            <button class="btn sm sec" type="submit">{{ 'Make user' if u['is_admin'] else 'Make administrator' }}</button>
+          </form>
+          {% if u['id'] != g.user['id'] %}
+          <form method="post" action="{{ url_for('users_delete', uid=u['id']) }}" onsubmit="return confirm('Delete user {{ u['username'] }}?')">
+            <button class="btn sm danger" type="submit">Delete</button>
+          </form>
+          {% endif %}
+        </div></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="card" style="max-width:520px">
+  <h2>Add a user</h2>
+  <form method="post" action="{{ url_for('users_add') }}" autocomplete="off">
+    <label for="username">Username</label>
+    <input id="username" name="username" required>
+    <div style="height:10px"></div>
+    <label for="password">Password (at least 8 characters)</label>
+    <input type="password" id="password" name="password" autocomplete="new-password" minlength="8" required>
+    <p><label style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" name="is_admin" value="1" style="width:auto"> Administrator (can manage users)</label></p>
+    <button class="btn" type="submit">Add user</button>
+  </form>
+</div>
+{% endblock %}

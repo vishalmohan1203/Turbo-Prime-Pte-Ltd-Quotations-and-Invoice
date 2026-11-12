@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Quotations{% endblock %} · Turbo Prime ERP</title>
+<style>
+  :root { --navy:#0b3c5d; --teal:#1d7a8c; --bg:#f2f6f9; --line:#d3dde5; --err:#b3261e; --ok:#1b7f3b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.45 "Segoe UI",system-ui,sans-serif; background:var(--bg); color:#17252f; }
+  header { background:var(--navy); color:#fff; padding:14px 24px; display:flex; align-items:center; gap:24px; }
+  header h1 { font-size:18px; margin:0; letter-spacing:.3px; }
+  header small { opacity:.7; display:block; font-weight:400; font-size:12px; }
+  header nav { display:flex; flex:1; flex-wrap:wrap; row-gap:6px; }
+  header nav a { color:#fff; text-decoration:none; margin-right:18px; opacity:.85; }
+  header nav a:hover { opacity:1; text-decoration:underline; }
+  .draft-badge { display:inline-block; background:#fff3cd; color:#7a5300; border:1px solid #e6c36a; border-radius:4px;
+    font-size:11px; font-weight:700; letter-spacing:.5px; padding:1px 6px; vertical-align:middle; }
+  .draft-note { background:#fff8e1; border:1px solid #f0d58c; color:#5c4300; border-radius:6px; padding:8px 12px; margin:0 0 12px; }
+  header .brand { display:flex; align-items:center; gap:10px; color:#fff; text-decoration:none; flex-shrink:0; }
+  header .brand .logo { background:#fff; border-radius:8px; padding:3px; display:flex; }
+  header .brand .logo img { height:36px; width:auto; display:block; }
+  /* click-to-open header menus (Stored Datas, user name) */
+  header details.menu { position:relative; margin-right:18px; }
+  header details.menu summary { list-style:none; cursor:pointer; opacity:.85; user-select:none; }
+  header details.menu summary::-webkit-details-marker { display:none; }
+  header details.menu summary::after { content:" \25BE"; font-size:11px; }
+  header details.menu summary:hover, header details.menu[open] summary { opacity:1; text-decoration:underline; }
+  header details.menu.right { margin-right:0; }
+  header .menu-list { position:absolute; top:calc(100% + 8px); left:0; z-index:50; min-width:210px; background:#fff; border:1px solid var(--line); border-radius:6px; box-shadow:0 6px 18px rgba(0,0,0,.15); padding:6px 0; }
+  header details.menu.right .menu-list { left:auto; right:0; min-width:150px; }
+  header .menu-list a { display:block; color:var(--navy); opacity:1; margin:0; padding:8px 14px; white-space:nowrap; }
+  header .menu-list a:hover { background:#e8f1f8; text-decoration:none; }
+  main { max-width:1050px; margin:24px auto; padding:0 16px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:22px; margin-bottom:18px; }
+  h2 { margin:0 0 14px; font-size:18px; color:var(--navy); }
+  label { display:block; font-weight:600; font-size:13px; margin-bottom:4px; color:#34495a; }
+  input, select, textarea { width:100%; padding:8px 10px; border:1px solid #b9c7d2; border-radius:5px; font:inherit; background:#fff; }
+  input:focus, select:focus, textarea:focus { outline:2px solid var(--teal); border-color:var(--teal); }
+  input[readonly] { background:#eef3f6; }
+  /* number boxes: plain typed values, no up/down arrows */
+  input[type=number] { -moz-appearance:textfield; appearance:textfield; }
+  input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+  textarea { resize:vertical; }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); }
+  .span2 { grid-column:span 2; }
+  .btn { display:inline-block; background:var(--navy); color:#fff; border:0; padding:9px 18px; border-radius:5px; cursor:pointer; text-decoration:none; font:inherit; font-weight:600; }
+  .btn:hover { background:#082c45; }
+  .btn.sec { background:#fff; color:var(--navy); border:1px solid var(--navy); }
+  .btn.sec:hover { background:#e8f1f8; }
+  .btn.danger { background:#fff; color:var(--err); border:1px solid var(--err); }
+  .btn.sm { padding:5px 11px; font-size:13px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { padding:9px 8px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { background:#e8f1f8; color:var(--navy); font-size:13px; }
+  td.num, th.num { text-align:right; }
+  .flash { padding:10px 14px; border-radius:5px; margin-bottom:10px; }
+  .flash.ok { background:#e3f4e8; color:var(--ok); border:1px solid #b5dfc1; }
+  .flash.err { background:#fbe9e7; color:var(--err); border:1px solid #f1bdb8; }
+  .actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .flow { display:flex; flex-wrap:wrap; align-items:stretch; gap:6px; margin-bottom:16px; }
+  .flow .step { display:flex; flex-direction:column; justify-content:center; padding:7px 12px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--navy); text-decoration:none; min-width:118px; }
+  .flow .step b { font-size:13px; } .flow .step small { font-size:12px; color:#5b6b78; }
+  .flow .step.done { border-color:var(--teal); } .flow .step.todo { background:#f4f6f8; color:#8a97a3; }
+  .flow .step.cur { background:var(--navy); border-color:var(--navy); color:#fff; } .flow .step.cur small { color:#d6e4ee; }
+  .flow .arrow { align-self:center; color:#8a97a3; }
+  .qno { font-size:22px; font-weight:700; color:var(--navy); }
+  .badge { display:inline-block; padding:2px 9px; border-radius:20px; font-size:12px; font-weight:600; background:#e8f1f8; color:var(--navy); text-decoration:none; }
+  .badge.ok { background:#e3f4e8; color:var(--ok); }
+  .muted { color:#6a7d8b; }
+  .toolbar { display:flex; gap:10px; justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; }
+  @media (max-width:640px){ .span2{grid-column:span 1;} }
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="{{ url_for('index') }}">
+    <span class="logo"><img src="{{ url_for('brand_logo') }}" alt="{{ company.short }} logo"></span>
+    <h1>{{ company.short }} <small>Quotation Manager</small></h1>
+  </a>
+  <nav><a href="{{ url_for('new') }}">+ New Quotation</a><a href="{{ url_for('index') }}">Quotations</a><a href="{{ url_for('jobs') }}">Job Orders</a><a href="{{ url_for('deliveries') }}">Delivery Orders</a><a href="{{ url_for('invoices') }}">Tax Invoices</a><a href="{{ url_for('purchase_orders') }}">Purchase Orders</a><a href="{{ url_for('ci_list') }}">Commercial Invoices</a><a href="{{ url_for('pl_list') }}">Packing Lists</a>
+    {% if g.user %}<details class="menu"><summary>Stored Datas</summary>
+      <div class="menu-list">
+        <a href="{{ url_for('saved') }}">Saved Address &amp; T/C Type</a>
+        {% if g.user['is_admin'] %}<a href="{{ url_for('terms_page') }}">T&amp;C Type</a>
+        <a href="{{ url_for('bank') }}">Bank Details</a>{% endif %}
+      </div></details>{% endif %}
+    {% if g.user and g.user['is_admin'] %}<a href="{{ url_for('letterhead') }}">Letterhead</a>{% endif %}
+    {% if g.user %}<span style="margin-left:auto;display:flex;gap:18px;align-items:center">
+      {% if g.user['is_admin'] %}<a href="{{ url_for('users') }}" style="margin:0">Users</a>{% endif %}
+      <details class="menu right"><summary>{{ g.user['username'] }}</summary>
+        <div class="menu-list">
+          <a href="{{ url_for('account') }}">My Account</a>
+          <a href="{{ url_for('logout') }}">Log out</a>
+        </div></details></span>{% endif %}</nav>
+</header>
+<main>
+  {% for category, msg in get_flashed_messages(with_categories=true) %}
+    <div class="flash {{ category }}">{{ msg }}</div>
+  {% endfor %}
+  {% block content %}{% endblock %}
+</main>
+<script>
+// header menus: clicking elsewhere (or opening another menu) closes an open one
+document.addEventListener('click', e => {
+  document.querySelectorAll('header details.menu[open]').forEach(d => { if (!d.contains(e.target)) d.removeAttribute('open'); });
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('header details.menu[open]').forEach(d => d.removeAttribute('open')); });
+// the mouse wheel must not change a number that is being typed
+document.addEventListener('wheel', e => { if (e.target.type === 'number' && document.activeElement === e.target) e.target.blur(); }, {passive: true});
+// safety net: any delete form asks first (forms that already ask are left alone)
+document.addEventListener('submit', e => {
+  const f = e.target;
+  if (f.getAttribute && /\/delete(\/|$)/.test(f.getAttribute('action') || '') && !f.getAttribute('onsubmit')) {
+    if (!confirm('Are you sure you want to delete this? This cannot be undone.')) e.preventDefault();
+  }
+}, true);
+</script>
+</body>
+</html>
