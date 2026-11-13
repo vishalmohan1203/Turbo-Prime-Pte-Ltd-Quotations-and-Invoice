@@ -1834,17 +1834,17 @@ def build_quotation_pdf(q, items):
 
     # ---- Terms & conditions (the quotation's own, editable text) -------------------------------
     terms = (q["terms"] or default_terms(q["currency"], q["delivery_time"], q["company"])).replace("\r", "").split("\n")
-    tc = [Paragraph("Terms &amp; Conditions:", ParagraphStyle("tch", parent=bold, leading=13.2, leftIndent=1.8))]
-    tc += [Paragraph(escape(t), ParagraphStyle("tcl", parent=terms_st, leftIndent=1.8)) if t.strip()
-           else Spacer(1, 6) for t in terms]
-    tc += [Spacer(1, 13.2),
-           Paragraph("Kindly revert in case of any technical or commercial clarifications required.",
-                     ParagraphStyle("n1", parent=terms_st, leftIndent=1.8)),
-           Paragraph("This is a computer generated document, no signature is required",
-                     ParagraphStyle("n2", parent=terms_st, leftIndent=1.8))]
-    foot_h = _stack_height(parts + tc, W)
-    # one page: the total and the terms sit at the bottom, as in the sample; more pages: no big gaps
-    story += [_GapOrFill(doc, foot_h, min_gap=10 * mm), KeepTogether(parts), KeepTogether(tc)]
+    lines = [Paragraph(escape(t), ParagraphStyle("tcl", parent=terms_st, leftIndent=1.8)) if t.strip()
+             else Spacer(1, 6) for t in terms]
+    head = Paragraph("Terms &amp; Conditions:", ParagraphStyle("tch", parent=bold, leading=13.2, leftIndent=1.8))
+    notes = KeepTogether([Spacer(1, 13.2),
+                          Paragraph("Kindly revert in case of any technical or commercial clarifications required.",
+                                    ParagraphStyle("n1", parent=terms_st, leftIndent=1.8)),
+                          Paragraph("This is a computer generated document, no signature is required",
+                                    ParagraphStyle("n2", parent=terms_st, leftIndent=1.8))])
+    # the terms follow straight after the TOTAL box and fill the rest of the page; whatever does not fit
+    # continues on the next page (the heading always stays with its first few lines)
+    story += [KeepTogether(parts), Spacer(1, 16), KeepTogether([head] + lines[:3])] + lines[3:] + [notes]
     doc.build(story)
     buf.seek(0)
     return buf
