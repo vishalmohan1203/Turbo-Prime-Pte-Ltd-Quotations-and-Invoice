@@ -1714,7 +1714,7 @@ def build_pdf(q, items, jo=None, do=None):
 # Quotation PDF geometry (pt, from the latest sample quotation: US Letter page, 612 x 792)
 Q_LEFT, Q_RIGHT = 59.5, 551.5          # left / right edge of the item table and the TOTAL box
 # column widths: # | Item description | Part Num | Quantity | Unit Price | Total Price
-Q_COLS = [20.2, 155.3, 92.4, 42.2, 72.0, 109.9]
+Q_COLS = [20.2, 221.8, 70.0, 44.0, 60.0, 76.0]   # wide description; still fits part nos like '61044 & 61043' and 10,000,000.00
 Q_DETAILS_X = 378.2                    # left edge of the No / Date / Your ref ... block and of 'TOTAL(USD)'
 Q_HEADER = {"pte": (490, 52, 27.5)}      # (letterhead width, left, top) on the page
 
