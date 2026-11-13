@@ -884,6 +884,10 @@ def init_db():
                                 ("delivery_orders", "to_address", "TEXT"),
                                 ("delivery_orders", "tc_type", "TEXT"),
                                 ("purchase_orders", "remarks", "TEXT NOT NULL DEFAULT ''"),
+                                # purchase order discount (taken off the sub total before GST)
+                                ("purchase_orders", "discount_type", "TEXT NOT NULL DEFAULT 'percent'"),
+                                ("purchase_orders", "discount_value", "TEXT NOT NULL DEFAULT '0'"),
+                                ("purchase_orders", "discount_amt", "TEXT NOT NULL DEFAULT '0'"),
                                 # "Save as Draft": unfinished documents (1) that can be resumed later
                                 *((t, "is_draft", "INTEGER NOT NULL DEFAULT 0") for t in DRAFT_TABLES)):
             if col not in [r[1] for r in db.execute(f"PRAGMA table_info({table})")]:
@@ -2022,10 +2026,15 @@ def build_po_pdf(q, po, items):
     th = total_t.wrap(W, 800)[1]
     footer_parts = []
     rate = Decimal(str(po["gst_rate"] or "0"))
-    if rate:                       # GST entered: Sub Total and GST lines just above the TOTAL box
-        sums_t = Table([[Paragraph("Sub Total", right), Paragraph(fmt_money(po["subtotal"]), right)],
-                        [Paragraph(f"GST {fmt_qty(rate)}%", right), Paragraph(fmt_money(po["gst_amt"]), right)]],
-                       colWidths=[label_w, TW - label_w])
+    disc = Decimal(str(po["discount_amt"] or "0"))
+    if rate or disc:               # discount / GST entered: Sub Total, Discount, GST lines just above the TOTAL box
+        rows = [[Paragraph("Sub Total", right), Paragraph(fmt_money(po["subtotal"]), right)]]
+        if disc:
+            pct = (f" {fmt_qty(Decimal(str(po['discount_value'])))}%" if po["discount_type"] == "percent" else "")
+            rows.append([Paragraph(f"Discount{pct}", right), Paragraph("- " + fmt_money(disc), right)])
+        if rate:
+            rows.append([Paragraph(f"GST {fmt_qty(rate)}%", right), Paragraph(fmt_money(po["gst_amt"]), right)])
+        sums_t = Table(rows, colWidths=[label_w, TW - label_w])
         sums_t.setStyle(TableStyle([("RIGHTPADDING", (0, 0), (-1, -1), 1.9), ("TOPPADDING", (0, 0), (-1, -1), 1),
                                     ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
         sums_t.hAlign = "RIGHT"
@@ -2775,12 +2784,26 @@ def parse_po(form, errors):
     if cur not in PO_CURRENCIES:
         errors.append("Choose the currency (" + " / ".join(PO_CURRENCIES) + ").")
     subtotal = money(sum((it["line_total"] for it in items), Decimal(0)))
+    # discount (percentage or fixed amount) comes off the sub total; GST is on the discounted amount
+    dtype = form.get("discount_type", "percent")
+    if dtype not in ("percent", "amount"):
+        dtype = "percent"
+    dval = to_decimal(form.get("discount_value") or "0", "Discount", errors)
+    if dtype == "percent":
+        if dval > 100:
+            errors.append("Discount % cannot exceed 100.")
+        disc = money(subtotal * dval / 100)
+    else:
+        if dval > subtotal:
+            errors.append("Discount cannot be more than the sub total.")
+        disc = money(dval)
     rate = to_decimal(form.get("gst_rate") or "0", "GST %", errors)
     if rate > 100:
         errors.append("GST % cannot exceed 100.")
-    gst = money(subtotal * rate / 100)
-    return items, {"currency": cur, "subtotal": subtotal, "gst_rate": rate, "gst_amt": gst,
-                   "total": money(subtotal + gst)}
+    taxable = money(subtotal - disc)
+    gst = money(taxable * rate / 100)
+    return items, {"currency": cur, "subtotal": subtotal, "discount_type": dtype, "discount_value": dval,
+                   "discount_amt": disc, "gst_rate": rate, "gst_amt": gst, "total": money(taxable + gst)}
 
 
 def save_po_items(db, pid, items):
@@ -2836,7 +2859,8 @@ def po_new(jid):
     else:
         jo, q, _jitems = load_job(db, jid)
     blank = {"id": None, "po_no": "", "po_date": "", "to_address": "", "your_ref": "", "jo_ref": "",
-             "tc_type": "", "currency": "", "gst_rate": "0", "remarks": "", "is_draft": 0}
+             "tc_type": "", "currency": "", "gst_rate": "0", "remarks": "", "is_draft": 0,
+             "discount_type": "percent", "discount_value": "0"}
     if request.method == "POST":
         f = request.form
         h = po_form_fields(f)
@@ -2850,11 +2874,12 @@ def po_new(jid):
             try:
                 cur = db.execute(
                     "INSERT INTO purchase_orders (po_no, job_id, po_date, to_address, your_ref, jo_ref, tc_type, "
-                    "currency, subtotal, gst_rate, gst_amt, total, created_at, company, remarks, is_draft) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "currency, subtotal, gst_rate, gst_amt, total, created_at, company, remarks, is_draft, "
+                    "discount_type, discount_value, discount_amt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (h["po_no"], jid, h["po_date"], h["to_address"], h["your_ref"], h["jo_ref"], h["tc_type"],
                      m["currency"], str(m["subtotal"]), str(m["gst_rate"]), str(m["gst_amt"]), str(m["total"]),
-                     datetime.now().isoformat(timespec="seconds"), q["company"], h["remarks"], int(draft)))
+                     datetime.now().isoformat(timespec="seconds"), q["company"], h["remarks"], int(draft),
+                     m["discount_type"], str(m["discount_value"]), str(m["discount_amt"])))
             except sqlite3.IntegrityError:      # someone saved the same number a moment ago
                 db.rollback()
                 errors.append(f"Purchase order number {h['po_no']} already exists.")
@@ -2872,7 +2897,8 @@ def po_new(jid):
         for e in errors:
             flash(e, "err")
         blank.update(h)
-        blank.update(currency=f.get("currency", ""), gst_rate=f.get("gst_rate", "0"))
+        blank.update(currency=f.get("currency", ""), gst_rate=f.get("gst_rate", "0"),
+                     discount_type=f.get("discount_type", "percent"), discount_value=f.get("discount_value", "0"))
         return render_template("po_view.html", po=blank, items=po_items_from_form(f) or [{}], is_new=True,
                                **po_page_ctx(db, jo, q))
     if jo is None:                      # stand-alone: the number is filled in automatically (editable)
@@ -2912,11 +2938,12 @@ def po_view(pid):
         if not errors:
             try:
                 db.execute("UPDATE purchase_orders SET po_no=?, po_date=?, to_address=?, your_ref=?, jo_ref=?, "
-                           "tc_type=?, currency=?, subtotal=?, gst_rate=?, gst_amt=?, total=?, remarks=?, is_draft=? "
-                           "WHERE id=?",
+                           "tc_type=?, currency=?, subtotal=?, gst_rate=?, gst_amt=?, total=?, remarks=?, is_draft=?, "
+                           "discount_type=?, discount_value=?, discount_amt=? WHERE id=?",
                            (h["po_no"], h["po_date"], h["to_address"], h["your_ref"], h["jo_ref"], h["tc_type"],
                             m["currency"], str(m["subtotal"]), str(m["gst_rate"]), str(m["gst_amt"]),
-                            str(m["total"]), h["remarks"], int(draft), pid))
+                            str(m["total"]), h["remarks"], int(draft), m["discount_type"],
+                            str(m["discount_value"]), str(m["discount_amt"]), pid))
             except sqlite3.IntegrityError:
                 db.rollback()
                 errors.append(f"Purchase order number {h['po_no']} already exists.")
@@ -2934,7 +2961,8 @@ def po_view(pid):
             flash(e, "err")
         shown = dict(po)
         shown.update(h)
-        shown.update(currency=f.get("currency", ""), gst_rate=f.get("gst_rate", "0"))
+        shown.update(currency=f.get("currency", ""), gst_rate=f.get("gst_rate", "0"),
+                     discount_type=f.get("discount_type", "percent"), discount_value=f.get("discount_value", "0"))
         return render_template("po_view.html", po=shown, items=po_items_from_form(f) or [{}], is_new=False, **ctx)
     return render_template("po_view.html", po=dict(po), items=[dict(i) for i in items], is_new=False, **ctx)
 
