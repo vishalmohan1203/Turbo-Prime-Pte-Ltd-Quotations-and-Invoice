@@ -1814,7 +1814,7 @@ def build_quotation_pdf(q, items):
     Your ref / TC Type / Vessel Name), boxed '# | Item description | Part Num | Quantity |
     Unit Price | Total Price' table, one boxed TOTAL(currency) row and the editable Terms & Conditions."""
     TITLE_TOP, TO_TOP = 147.1, 164.2                          # (tuned so the text lands where the sample's does)
-    FOOT_BOTTOM = 699.5                                       # bottom of the last line of the footer block
+    FOOT_BOTTOM = 745.0                                       # bottom of the last line of the footer block (about 17 mm above the page edge)
     hw, hleft, htop = Q_HEADER.get(q["company"], Q_HEADER["pte"])
     buf = io.BytesIO()
     left_m, right_m = Q_LEFT - 6, 612 - Q_RIGHT - 6
