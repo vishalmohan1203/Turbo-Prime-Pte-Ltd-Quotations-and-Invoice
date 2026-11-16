@@ -14,6 +14,8 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from xml.sax.saxutils import escape
 
+from markupsafe import Markup
+
 import secrets
 import time
 from functools import wraps
@@ -30,7 +32,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase.pdfmetrics import stringWidth
-from reportlab.platypus import (BaseDocTemplate, Frame, Image, KeepTogether, NextPageTemplate,
+from reportlab.platypus import (BaseDocTemplate, Flowable, Frame, Image, KeepTogether, NextPageTemplate,
                                 PageTemplate, Paragraph, SimpleDocTemplate,
                                 Spacer, Table, TableStyle)
 
@@ -1246,6 +1248,34 @@ class _GapOrFill(Spacer):
         return avail_w, min(self.gap, avail_h)
 
 
+class _FillIfFits(Flowable):
+    """The free space between a quotation's last item and its TOTAL box. When the TOTAL and the terms
+    fit on the rest of the page, it takes up the free space so they sit at the bottom of the page. When
+    only the TOTAL fits, it is a normal gap (the terms then carry on onto the next page). When not even
+    the TOTAL fits, it moves to the next page and fills there, so the TOTAL and terms sit at the bottom
+    of that page."""
+
+    def __init__(self, block_height, first_height, gap):
+        Flowable.__init__(self)
+        self.block_height, self.first_height, self.gap = block_height, first_height, gap
+
+    def wrap(self, avail_w, avail_h):
+        room = avail_h - self.block_height - 6
+        if room >= self.gap:
+            self.height = room
+        elif avail_h >= self.first_height + self.gap + 6:
+            self.height = self.gap
+        else:
+            self.height = avail_h + 1          # does not fit: go on to the next page (see split)
+        return avail_w, self.height
+
+    def split(self, avail_w, avail_h):
+        return []                              # never split: moved to the next page and measured again
+
+    def draw(self):
+        pass
+
+
 # --------------------------------------------------------------------------
 # Letterhead (the header printed on every PDF), editable by an administrator on the Letterhead page.
 # It is drawn from the saved text + the logo / certification pictures into a PNG (cached on the data
@@ -1466,16 +1496,85 @@ def to_and_details(to_address, right_html, right_w, base):
     return info
 
 
+# Text styling typed in descriptions, remarks and terms with the B / I / colour buttons:
+#   [b]bold[/b]   [i]italic[/i]   [color=red]red text[/color]
+# Printed as real bold / italic / colour on the PDFs and pages; anything else stays plain text.
+TEXT_COLORS = {"red": "#c00000", "blue": "#0070c0", "green": "#00875a", "orange": "#d35400", "black": "#000000"}
+_STYLE_TOKEN = re.compile(r"(\[/?[bi]\]|\[color=[a-z]+\]|\[/color\])", re.I)
+
+
+def styled_lines(value, html=False):
+    """The text as a list of lines, each with its styling turned into PDF (or HTML) tags. Every line is
+    complete on its own (tags still open at the end of a line are closed there and reopened on the next
+    line), and unknown or unmatched codes are dropped, so a typing slip can never break a PDF."""
+    def open_tag(kind, arg):
+        if kind == "color":
+            return f'<span style="color:{arg}">' if html else f'<font color="{arg}">'
+        return {"b": "<strong>", "i": "<em>"}[kind] if html else f"<{kind}>"
+
+    def close_tag(kind):
+        if kind == "color":
+            return "</span>" if html else "</font>"
+        return {"b": "</strong>", "i": "</em>"}[kind] if html else f"</{kind}>"
+
+    stack, out = [], []
+    for line in str(value or "").replace("\r", "").split("\n"):
+        buf = "".join(open_tag(k, a) for k, a in stack)
+        for tok in _STYLE_TOKEN.split(line):
+            low = tok.lower()
+            m = re.fullmatch(r"\[(/?)(b|i|color)(?:=([a-z]+))?\]", low) if tok.startswith("[") else None
+            if not m or (m.group(2) == "color" and not m.group(1) and m.group(3) not in TEXT_COLORS):
+                buf += escape(tok)                       # ordinary text (or an unknown colour: shown as typed)
+                continue
+            closing, kind = bool(m.group(1)), m.group(2)
+            if not closing:
+                arg = TEXT_COLORS[m.group(3)] if kind == "color" else None
+                stack.append((kind, arg))
+                buf += open_tag(kind, arg)
+            elif any(k == kind for k, _ in stack):       # close it (and re-open anything opened after it)
+                above = []
+                while stack[-1][0] != kind:
+                    above.append(stack.pop())
+                    buf += close_tag(above[-1][0])
+                buf += close_tag(stack.pop()[0])
+                for k, a in reversed(above):
+                    stack.append((k, a))
+                    buf += open_tag(k, a)
+            # a closing code with nothing open is dropped
+        buf += "".join(close_tag(k) for k, _ in reversed(stack))
+        out.append(buf)
+    return out
+
+
+def styled(value):
+    """User text for a PDF paragraph: styling applied, line breaks kept."""
+    return "<br/>".join(styled_lines(value))
+
+
+def plain_text(value):
+    """The text without the styling codes (for checks such as 'is this line a heading')."""
+    return _STYLE_TOKEN.sub("", str(value or ""))
+
+
+@app.template_filter("styled")
+def styled_html(value):
+    """Jinja: show user text on a page with its bold / italic / colour styling (line breaks kept)."""
+    return Markup("\n".join(styled_lines(value, html=True)))
+
+
 def rich(value):
     """User text; short lines ending with ':' (e.g. 'Job scope:') become bold dark blue."""
     out = []
-    for line in str(value or "").replace("\r", "").split("\n"):
-        t = line.strip()
+    for raw, line in zip(str(value or "").replace("\r", "").split("\n"), styled_lines(value)):
+        t = plain_text(raw).strip()
         if t.endswith(":") and 0 < len(t) <= 40:
-            out.append(f"<font color='#0b2a63'><b>{escape(line)}</b></font>")
+            out.append(f"<font color='#0b2a63'><b>{line}</b></font>")
         else:
-            out.append(escape(line))
+            out.append(line)
     return "<br/>".join(out)
+
+
+_rich_global = rich
 
 
 class _PageGap(Spacer):
@@ -1602,7 +1701,7 @@ def build_job_pdf(q, items, jo):
     if (q["remarks"] or "").strip():
         h = t.wrap(W, 800)[1]
         story += [Spacer(1, max(24, REMARKS_TOP - TABLE_TOP - h)),
-                  Paragraph("Remarks:", rem), Paragraph(txt(q["remarks"]), rem)]
+                  Paragraph("Remarks:", rem), Paragraph(styled(q["remarks"]), rem)]
     doc.build(story)
     buf.seek(0)
     return buf
@@ -1641,16 +1740,7 @@ def build_pdf(q, items, jo=None, do=None):
     def txt(value):
         return escape(str(value or "")).replace("\n", "<br/>")
 
-    def rich(value):
-        """User text; short lines ending with ':' (e.g. 'Job scope:') become bold dark blue."""
-        out = []
-        for line in str(value or "").replace("\r", "").split("\n"):
-            t = line.strip()
-            if t.endswith(":") and 0 < len(t) <= 40:
-                out.append(f"<font color='#0b2a63'><b>{escape(line)}</b></font>")
-            else:
-                out.append(escape(line))
-        return "<br/>".join(out)
+    rich = _rich_global
 
     def para(value, style=base):
         return Paragraph(txt(value), style)
@@ -1819,32 +1909,39 @@ def build_quotation_pdf(q, items):
         sub_t = Table([["", Paragraph("Sub Total", base), Paragraph(fmt_money(q["subtotal"]), right)],
                        ["", Paragraph(label, base), Paragraph(fmt_money(disc), right)]], colWidths=cw)
         sub_t.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                                   ("RIGHTPADDING", (2, 0), (2, -1), 3), ("TOPPADDING", (0, 0), (-1, -1), 1),
-                                   ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
+                                   ("RIGHTPADDING", (2, 0), (2, -1), 4), ("TOPPADDING", (0, 0), (-1, -1), 2),
+                                   ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
         sub_t.hAlign = "LEFT"
-        parts += [sub_t, Spacer(1, 3)]
+        parts += [sub_t, Spacer(1, 5)]
     total_t = Table([["", Paragraph(f"TOTAL({txt(cur)})", bold), Paragraph(fmt_money(q["total"]), total_r)]],
                     colWidths=cw)
     total_t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 1.2, colors.black),
                                  ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                                 ("RIGHTPADDING", (2, 0), (2, 0), 3),
-                                 ("TOPPADDING", (0, 0), (-1, -1), 1.2), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.6)]))
+                                 ("RIGHTPADDING", (2, 0), (2, 0), 4), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                 ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4.5)]))
     total_t.hAlign = "LEFT"
     parts.append(total_t)
 
     # ---- Terms & conditions (the quotation's own, editable text) -------------------------------
     terms = (q["terms"] or default_terms(q["currency"], q["delivery_time"], q["company"])).replace("\r", "").split("\n")
-    lines = [Paragraph(escape(t), ParagraphStyle("tcl", parent=terms_st, leftIndent=1.8)) if t.strip()
-             else Spacer(1, 6) for t in terms]
+    lines = [Paragraph(sl, ParagraphStyle("tcl", parent=terms_st, leftIndent=1.8)) if plain_text(t).strip()
+             else Spacer(1, 6) for t, sl in zip(terms, styled_lines("\n".join(terms)))]
     head = Paragraph("Terms &amp; Conditions:", ParagraphStyle("tch", parent=bold, leading=13.2, leftIndent=1.8))
-    notes = KeepTogether([Spacer(1, 13.2),
-                          Paragraph("Kindly revert in case of any technical or commercial clarifications required.",
-                                    ParagraphStyle("n1", parent=terms_st, leftIndent=1.8)),
-                          Paragraph("This is a computer generated document, no signature is required",
-                                    ParagraphStyle("n2", parent=terms_st, leftIndent=1.8))])
+    note_parts = [Spacer(1, 13.2),
+                  Paragraph("Kindly revert in case of any technical or commercial clarifications required.",
+                            ParagraphStyle("n1", parent=terms_st, leftIndent=1.8)),
+                  Paragraph("This is a computer generated document, no signature is required",
+                            ParagraphStyle("n2", parent=terms_st, leftIndent=1.8))]
+    notes = KeepTogether(note_parts)
     # the terms follow straight after the TOTAL box and fill the rest of the page; whatever does not fit
     # continues on the next page (the heading always stays with its first few lines)
-    story += [KeepTogether(parts), Spacer(1, 16), KeepTogether([head] + lines[:3])] + lines[3:] + [notes]
+    # the TOTAL box and the terms sit together at the bottom of the page; the free space is between the
+    # last item and the TOTAL, and more items fill it. Only when they no longer fit does anything go on
+    # to the next page: then the TOTAL follows the items and the terms carry on onto the next page.
+    parts_h = _stack_height(parts, W)
+    block_h = parts_h + 22 + _stack_height([head] + lines + note_parts, W)
+    story += [_FillIfFits(block_h, parts_h, 18), KeepTogether(parts), Spacer(1, 22),
+              KeepTogether([head] + lines[:3])] + lines[3:] + [notes]
     doc.build(story)
     buf.seek(0)
     return buf
@@ -1890,7 +1987,7 @@ def build_invoice_pdf(q, inv, items, jo_no):
              Paragraph("Quantity", head_c), Paragraph("Unit Price", head_r),
              Paragraph("Total Price", head_r)]]
     for it in items:
-        rows.append([Paragraph(txt(it["sno"]), base), Paragraph(txt(it["description"]), desc_st),
+        rows.append([Paragraph(txt(it["sno"]), base), Paragraph(styled(it["description"]), desc_st),
                      Paragraph(txt(it["part_no"]), ctr), Paragraph(fmt_qty(it["qty"]), ctr),
                      Paragraph(fmt_money(it["unit_price"]), right),
                      Paragraph(fmt_money(it["line_total"]), right)])
@@ -1992,7 +2089,7 @@ def build_po_pdf(q, po, items):
     rows = [[Paragraph("#", head_c), Paragraph("Item description", bold), Paragraph("Part No", head_c),
              Paragraph("Quantity", head_c), Paragraph("Unit Price", bold), Paragraph("Total Price", head_r)]]
     for it in items:
-        rows.append([Paragraph(txt(it["sno"]), ctr), Paragraph(txt(it["description"]), base),
+        rows.append([Paragraph(txt(it["sno"]), ctr), Paragraph(styled(it["description"]), base),
                      Paragraph(txt(it["part_no"]), ctr), Paragraph(fmt_qty(it["qty"]), ctr),
                      Paragraph(fmt_money(it["unit_price"]), right), Paragraph(fmt_money(it["line_total"]), right)])
     items_t = Table(rows, colWidths=PO_COLS, repeatRows=1)
@@ -2008,7 +2105,7 @@ def build_po_pdf(q, po, items):
     items_t.hAlign = "RIGHT"
     story.append(items_t)
     if (po["remarks"] or "").strip():   # remarks right after the last item, aligned with the item table
-        rem_t = Table([[[Paragraph("Remarks:", bold), Paragraph(txt(po["remarks"].strip()), base)]]], colWidths=[TW])
+        rem_t = Table([[[Paragraph("Remarks:", bold), Paragraph(styled(po["remarks"].strip()), base)]]], colWidths=[TW])
         rem_t.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 1.9), ("RIGHTPADDING", (0, 0), (-1, -1), 1.9),
                                    ("TOPPADDING", (0, 0), (-1, -1), 12), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
         rem_t.hAlign = "RIGHT"
