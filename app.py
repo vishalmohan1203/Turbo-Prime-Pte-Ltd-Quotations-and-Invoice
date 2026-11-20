@@ -1928,7 +1928,7 @@ def build_quotation_pdf(q, items):
              else Spacer(1, 6) for t, sl in zip(terms, styled_lines("\n".join(terms)))]
     head = Paragraph("Terms &amp; Conditions:", ParagraphStyle("tch", parent=bold, leading=13.2, leftIndent=1.8))
     note_parts = [Spacer(1, 13.2),
-                  Paragraph("Kindly revert in case of any technical or commercial clarifications required.",
+                  Paragraph("Kindly revert in case of any technical or commercial clarifications are required.",
                             ParagraphStyle("n1", parent=terms_st, leftIndent=1.8)),
                   Paragraph("This is a computer generated document, no signature is required",
                             ParagraphStyle("n2", parent=terms_st, leftIndent=1.8))]
