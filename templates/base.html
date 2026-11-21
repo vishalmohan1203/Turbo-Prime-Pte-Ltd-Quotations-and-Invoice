@@ -17,6 +17,21 @@
   .draft-badge { display:inline-block; background:#fff3cd; color:#7a5300; border:1px solid #e6c36a; border-radius:4px;
     font-size:11px; font-weight:700; letter-spacing:.5px; padding:1px 6px; vertical-align:middle; }
   .draft-note { background:#fff8e1; border:1px solid #f0d58c; color:#5c4300; border-radius:6px; padding:8px 12px; margin:0 0 12px; }
+  /* B / I / colour bar shown above description, remarks and terms boxes */
+  #fmtbar { position:absolute; z-index:60; display:none; gap:4px; align-items:center; background:#fff; border:1px solid var(--line);
+    border-radius:6px; box-shadow:0 3px 10px rgba(0,0,0,.12); padding:3px 5px; }
+  #fmtbar button { border:1px solid var(--line); background:#f7f9fb; border-radius:4px; min-width:26px; height:24px; padding:0 6px;
+    cursor:pointer; font-size:13px; line-height:22px; color:#222; }
+  #fmtbar button:hover { background:#e8f1f8; }
+  #fmtbar .sw { width:20px; min-width:20px; padding:0; }
+  #fmtbar .sep { width:1px; height:18px; background:var(--line); margin:0 2px; }
+  #fmtbar .hint { font-size:11px; color:#777; margin-left:4px; }
+  /* list pages: click a column heading to sort */
+  table.sortable th[data-sortable] { cursor:pointer; user-select:none; white-space:nowrap; }
+  table.sortable th[data-sortable]:hover { text-decoration:underline; }
+  table.sortable th[data-sortable]::after { content:" \21C5"; opacity:.35; font-size:11px; }
+  table.sortable th[aria-sort=ascending]::after { content:" \25B2"; opacity:1; }
+  table.sortable th[aria-sort=descending]::after { content:" \25BC"; opacity:1; }
   header .brand { display:flex; align-items:center; gap:10px; color:#fff; text-decoration:none; flex-shrink:0; }
   header .brand .logo { background:#fff; border-radius:8px; padding:3px; display:flex; }
   header .brand .logo img { height:36px; width:auto; display:block; }
@@ -121,6 +136,114 @@ document.addEventListener('keydown', e => {
   }
   const first = boxes(next)[0];
   if (first) { e.preventDefault(); first.focus(); }
+});
+// B / I / colour bar for descriptions, remarks and terms: select text, click a button. The text gets
+// simple codes - [b]bold[/b], [i]italic[/i], [color=red]text[/color] - printed as real styling on the PDF.
+(() => {
+  const RICH = 'textarea[name=description], textarea[name=remarks], textarea[name=terms]';
+  const COLORS = {red: '#c00000', blue: '#0070c0', green: '#00875a', orange: '#d35400', black: '#000000'};
+  const bar = document.createElement('div');
+  bar.id = 'fmtbar';
+  bar.innerHTML = '<button type="button" data-w="b" title="Bold (Ctrl+B)"><b>B</b></button>'
+    + '<button type="button" data-w="i" title="Italic (Ctrl+I)"><i>I</i></button><span class="sep"></span>'
+    + Object.entries(COLORS).map(([n, c]) => `<button type="button" class="sw" data-c="${n}" title="${n[0].toUpperCase() + n.slice(1)} text" style="background:${c}"></button>`).join('')
+    + '<span class="sep"></span><button type="button" data-x="1" title="Remove styling from the selected text">Clear</button>'
+    + '<span class="hint">select text first</span>';
+  document.body.appendChild(bar);
+  let ta = null;
+  const place = () => {
+    if (!ta) return;
+    const r = ta.getBoundingClientRect();
+    bar.style.left = (window.scrollX + r.left) + 'px';
+    bar.style.top = (window.scrollY + r.top - bar.offsetHeight - 3) + 'px';
+  };
+  const wrap = (open, close) => {
+    const s = ta.selectionStart, e = ta.selectionEnd, v = ta.value;
+    ta.value = v.slice(0, s) + open + v.slice(s, e) + close + v.slice(e);
+    ta.setSelectionRange(s + open.length, e + open.length);
+    ta.dispatchEvent(new Event('input', {bubbles: true}));
+  };
+  const clear = () => {
+    const s = ta.selectionStart, e = ta.selectionEnd, v = ta.value;
+    const mid = v.slice(s, e).replace(/\[\/?(?:b|i)\]|\[color=[a-z]+\]|\[\/color\]/gi, '');
+    ta.value = v.slice(0, s) + mid + v.slice(e);
+    ta.setSelectionRange(s, s + mid.length);
+    ta.dispatchEvent(new Event('input', {bubbles: true}));
+  };
+  bar.addEventListener('mousedown', e => e.preventDefault());       // keep the text box focused
+  bar.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b || !ta) return;
+    if (b.dataset.w) wrap(`[${b.dataset.w}]`, `[/${b.dataset.w}]`);
+    else if (b.dataset.c) wrap(`[color=${b.dataset.c}]`, '[/color]');
+    else if (b.dataset.x) clear();
+    ta.focus();
+  });
+  document.addEventListener('focusin', e => {
+    if (e.target.matches && e.target.matches(RICH)) { ta = e.target; bar.style.display = 'flex'; place(); }
+  });
+  document.addEventListener('focusout', e => {
+    if (e.target === ta) setTimeout(() => { if (document.activeElement !== ta) { bar.style.display = 'none'; ta = null; } }, 0);
+  });
+  document.addEventListener('keydown', e => {
+    if (!ta || e.target !== ta || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === 'b' || k === 'i') { e.preventDefault(); wrap(`[${k}]`, `[/${k}]`); }
+  });
+  window.addEventListener('resize', place);
+  document.addEventListener('scroll', place, true);
+  document.addEventListener('input', e => { if (e.target === ta) place(); });
+})();
+// list pages: click a column heading to sort ascending, click again for descending. Dates (dd-mm-yyyy),
+// amounts ('USD 4700.00') and document numbers ('Q260781', 'DO 26-0247') sort by their value; empty
+// cells always go last. The last choice is remembered per list (on this computer).
+document.querySelectorAll('table.sortable').forEach(table => {
+  const heads = [...table.tHead.rows[0].cells];
+  const body = table.tBodies[0];
+  if (!body) return;
+  const key = 'sort:' + (table.dataset.sortKey || location.pathname);
+  const value = cell => {
+    let t = (cell ? cell.innerText : '').replace(/\s+/g, ' ').trim();
+    if (/^[-\u2013\u2014]$/.test(t)) t = '';                         // a lone dash means 'nothing here'
+    let m = t.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (m) return {num: +(m[3] + m[2] + m[1])};
+    m = t.match(/^(?:[A-Z]{3}\s+)?(-?[\d,]+(?:\.\d+)?)$/);
+    if (m) return {num: parseFloat(m[1].replace(/,/g, ''))};
+    return {txt: t};
+  };
+  const collator = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
+  const sortBy = (col, dir) => {
+    const rows = [...body.rows];
+    rows.sort((ra, rb) => {
+      const a = value(ra.cells[col]), b = value(rb.cells[col]);
+      const ea = a.txt === '', eb = b.txt === '';
+      if (ea || eb) return ea === eb ? 0 : (ea ? 1 : -1);           // empty cells last
+      let c;
+      if (a.num !== undefined && b.num !== undefined) c = a.num - b.num;
+      else c = collator.compare(a.txt !== undefined ? a.txt : String(a.num), b.txt !== undefined ? b.txt : String(b.num));
+      return dir === 'asc' ? c : -c;
+    });
+    rows.forEach(r => body.appendChild(r));
+    heads.forEach(h => h.removeAttribute('aria-sort'));
+    heads[col].setAttribute('aria-sort', dir === 'asc' ? 'ascending' : 'descending');
+    try { localStorage.setItem(key, JSON.stringify([heads[col].innerText.trim(), dir])); } catch (e) {}
+  };
+  heads.forEach((th, col) => {
+    if (/^actions$/i.test(th.innerText.trim())) return;                // nothing to sort in the buttons column
+    th.dataset.sortable = '1';
+    th.tabIndex = 0;
+    th.title = 'Click to sort (click again to reverse)';
+    const go = () => sortBy(col, th.getAttribute('aria-sort') === 'ascending' ? 'desc' : 'asc');
+    th.addEventListener('click', go);
+    th.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+  });
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) || 'null');
+    if (saved) {
+      const col = heads.findIndex(h => h.innerText.trim() === saved[0] && h.dataset.sortable);
+      if (col >= 0) sortBy(col, saved[1]);
+    }
+  } catch (e) {}
 });
 // header menus: clicking elsewhere (or opening another menu) closes an open one
 document.addEventListener('click', e => {
