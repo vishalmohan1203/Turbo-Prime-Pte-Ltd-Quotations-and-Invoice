@@ -10,7 +10,7 @@
     </form>
   </div>
   {% if rows %}
-  <table>
+  <table class="sortable" data-sort-key="{{ request.path }}">
     <thead><tr><th>Delivery order no</th><th>Date</th><th>To</th><th>Customer PO No.</th><th>Vessel</th><th>Job order</th><th>Actions</th></tr></thead>
     <tbody>
     {% for r in rows %}
