@@ -11,7 +11,7 @@
     <a class="btn" href="{{ url_for(k.key ~ '_new') }}">+ New {{ k.title|lower }}</a>
   </div>
   {% if rows %}
-  <table>
+  <table class="sortable" data-sort-key="{{ request.path }}">
     <thead><tr><th>{{ k.title }} no</th><th>Date</th><th>To</th><th>Customer PO No.</th><th>Vessel</th>{% if k.prices %}<th class="num">Total</th>{% endif %}<th>Actions</th></tr></thead>
     <tbody>
     {% for r in rows %}
