@@ -12,7 +12,7 @@
   </div>
   {% if rows %}
   {% set has_jobs = rows|selectattr('jo_id')|list|length > 0 %}
-  <table>
+  <table class="sortable" data-sort-key="{{ request.path }}">
     <thead><tr><th>PO no</th><th>Date</th><th>Supplier</th><th>Your ref</th>{% if has_jobs %}<th>Job order</th>{% endif %}<th class="num">Total</th><th>Actions</th></tr></thead>
     <tbody>
     {% for r in rows %}
