@@ -1255,14 +1255,28 @@ class _FillIfFits(Flowable):
     the TOTAL fits, it moves to the next page and fills there, so the TOTAL and terms sit at the bottom
     of that page."""
 
-    def __init__(self, block_height, first_height, gap):
+    def __init__(self, block_height, first_height, gap, state=None, tight_block_height=None, tight_gap=None,
+                 line_style=None, leading=None):
         Flowable.__init__(self)
+        self.line_style, self.leading = line_style, leading     # (normal, tight) line spacing of the terms
         self.block_height, self.first_height, self.gap = block_height, first_height, gap
+        # 'tight' spacing: when the TOTAL and terms fit on this page only with smaller gaps, the gaps
+        # shrink (via the shared state read by _StateGap) instead of a few lines going to a new page
+        self.state = state if state is not None else {}
+        self.tight_block_height = tight_block_height if tight_block_height is not None else block_height
+        self.tight_gap = tight_gap if tight_gap is not None else gap
 
     def wrap(self, avail_w, avail_h):
         room = avail_h - self.block_height - 6
+        tight_room = avail_h - self.tight_block_height - 6
+        self.state["tight"] = False
         if room >= self.gap:
             self.height = room
+        elif tight_room >= self.tight_gap:
+            self.state["tight"] = True
+            self.height = tight_room
+        if self.line_style is not None:
+            self.line_style.leading = self.leading[1] if self.state["tight"] else self.leading[0]
         elif avail_h >= self.first_height + self.gap + 6:
             self.height = self.gap
         else:
@@ -1271,6 +1285,21 @@ class _FillIfFits(Flowable):
 
     def split(self, avail_w, avail_h):
         return []                              # never split: moved to the next page and measured again
+
+    def draw(self):
+        pass
+
+
+class _StateGap(Flowable):
+    """A gap that is smaller when the quotation's _FillIfFits switched to tight spacing."""
+
+    def __init__(self, state, normal, tight):
+        Flowable.__init__(self)
+        self.state, self.normal, self.tight = state, normal, tight
+
+    def wrap(self, avail_w, avail_h):
+        self.height = self.tight if self.state.get("tight") else self.normal
+        return avail_w, min(self.height, max(avail_h, 0))
 
     def draw(self):
         pass
@@ -1924,24 +1953,36 @@ def build_quotation_pdf(q, items):
 
     # ---- Terms & conditions (the quotation's own, editable text) -------------------------------
     terms = (q["terms"] or default_terms(q["currency"], q["delivery_time"], q["company"])).replace("\r", "").split("\n")
-    lines = [Paragraph(sl, ParagraphStyle("tcl", parent=terms_st, leftIndent=1.8)) if plain_text(t).strip()
+    tcl = ParagraphStyle("tcl", parent=terms_st, leftIndent=1.8)       # shared: tight mode tightens its leading
+    LEAD = (13.2, 12.0)
+    lines = [Paragraph(sl, tcl) if plain_text(t).strip()
              else Spacer(1, 6) for t, sl in zip(terms, styled_lines("\n".join(terms)))]
     head = Paragraph("Terms &amp; Conditions:", ParagraphStyle("tch", parent=bold, leading=13.2, leftIndent=1.8))
-    note_parts = [Spacer(1, 13.2),
-                  Paragraph("Kindly revert in case of any technical or commercial clarifications required.",
-                            ParagraphStyle("n1", parent=terms_st, leftIndent=1.8)),
-                  Paragraph("This is a computer generated document, no signature is required",
-                            ParagraphStyle("n2", parent=terms_st, leftIndent=1.8))]
-    notes = KeepTogether(note_parts)
+    fit = {}                                   # shared by _FillIfFits and the _StateGap gaps
+    GAPS = {"total": (22, 8), "notes": (13.2, 4), "items": (18, 8)}   # (normal, tight) in pt
+    note_parts = [_StateGap(fit, *GAPS["notes"]),
+                  Paragraph("Kindly revert in case of any technical or commercial clarifications required.", tcl),
+                  Paragraph("This is a computer generated document, no signature is required", tcl)]
     # the terms follow straight after the TOTAL box and fill the rest of the page; whatever does not fit
     # continues on the next page (the heading always stays with its first few lines)
     # the TOTAL box and the terms sit together at the bottom of the page; the free space is between the
     # last item and the TOTAL, and more items fill it. Only when they no longer fit does anything go on
     # to the next page: then the TOTAL follows the items and the terms carry on onto the next page.
     parts_h = _stack_height(parts, W)
-    block_h = parts_h + 22 + _stack_height([head] + lines + note_parts, W)
-    story += [_FillIfFits(block_h, parts_h, 18), KeepTogether(parts), Spacer(1, 22),
-              KeepTogether([head] + lines[:3])] + lines[3:] + [notes]
+    terms_h = _stack_height([head] + lines + note_parts[1:], W)         # without the gap before the notes
+    tcl.leading = LEAD[1]
+    terms_tight_h = _stack_height([head] + lines + note_parts[1:], W)
+    tcl.leading = LEAD[0]
+    block_h = parts_h + GAPS["total"][0] + terms_h + GAPS["notes"][0]
+    tight_h = parts_h + GAPS["total"][1] + terms_tight_h + GAPS["notes"][1]
+    story += [_FillIfFits(block_h, parts_h, GAPS["items"][0], fit, tight_h, GAPS["items"][1], tcl, LEAD),
+              KeepTogether(parts), _StateGap(fit, *GAPS["total"])]
+    if len(lines) > 6:
+        # the heading stays with its first lines, and the last lines stay with the closing notes, so a
+        # page never starts with just the two closing sentences
+        story += [KeepTogether([head] + lines[:3])] + lines[3:-3] + [KeepTogether(lines[-3:] + note_parts)]
+    else:
+        story += [KeepTogether([head] + lines + note_parts)]
     doc.build(story)
     buf.seek(0)
     return buf
