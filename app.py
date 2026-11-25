@@ -1270,17 +1270,17 @@ class _FillIfFits(Flowable):
         room = avail_h - self.block_height - 6
         tight_room = avail_h - self.tight_block_height - 6
         self.state["tight"] = False
-        if room >= self.gap:
+        if room >= self.gap:                   # TOTAL + terms fit: fill the space, they sit at the bottom
             self.height = room
-        elif tight_room >= self.tight_gap:
+        elif tight_room >= self.tight_gap:     # they fit only with smaller gaps: tighten
             self.state["tight"] = True
             self.height = tight_room
-        if self.line_style is not None:
-            self.line_style.leading = self.leading[1] if self.state["tight"] else self.leading[0]
-        elif avail_h >= self.first_height + self.gap + 6:
+        elif avail_h >= self.first_height + self.gap + 6:   # only the TOTAL fits: normal gap, terms run on
             self.height = self.gap
         else:
-            self.height = avail_h + 1          # does not fit: go on to the next page (see split)
+            self.height = avail_h + 1          # not even the TOTAL fits: go on to the next page (see split)
+        if self.line_style is not None:        # terms line spacing follows the tight / normal choice
+            self.line_style.leading = self.leading[1] if self.state["tight"] else self.leading[0]
         return avail_w, self.height
 
     def split(self, avail_w, avail_h):
@@ -1947,7 +1947,7 @@ def build_quotation_pdf(q, items):
     total_t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 1.2, colors.black),
                                  ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
                                  ("RIGHTPADDING", (2, 0), (2, 0), 4), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                                 ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4.5)]))
+                                 ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
     total_t.hAlign = "LEFT"
     parts.append(total_t)
 
@@ -1959,7 +1959,7 @@ def build_quotation_pdf(q, items):
              else Spacer(1, 6) for t, sl in zip(terms, styled_lines("\n".join(terms)))]
     head = Paragraph("Terms &amp; Conditions:", ParagraphStyle("tch", parent=bold, leading=13.2, leftIndent=1.8))
     fit = {}                                   # shared by _FillIfFits and the _StateGap gaps
-    GAPS = {"total": (22, 8), "notes": (13.2, 4), "items": (18, 8)}   # (normal, tight) in pt
+    GAPS = {"total": (8, 8), "notes": (6, 4), "items": (18, 8)}       # (normal, tight) in pt
     note_parts = [_StateGap(fit, *GAPS["notes"]),
                   Paragraph("Kindly revert in case of any technical or commercial clarifications required.", tcl),
                   Paragraph("This is a computer generated document, no signature is required", tcl)]
