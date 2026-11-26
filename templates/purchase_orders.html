@@ -4,9 +4,11 @@
 <div class="card">
   <div class="toolbar" style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center">
     <h2 style="margin:0">Purchase Orders</h2>
-    <form method="get" style="display:flex;gap:8px;width:360px;max-width:100%">
+    <form method="get" style="display:flex;gap:8px;width:520px;max-width:100%">
       <input name="q" value="{{ search }}" placeholder="Search PO no, job order, supplier, ref…">
       <button class="btn sec" type="submit">Search</button>
+      <a class="btn sec" href="{{ url_for(request.endpoint, q=search or None, format='xlsx') }}" style="white-space:nowrap"
+         title="Download this list (as shown, after any search) as an Excel file, with a per-customer summary sheet">Download Excel</a>
     </form>
     <a class="btn" href="{{ url_for('po_new') }}" style="justify-self:end">+ New purchase order</a>
   </div>
