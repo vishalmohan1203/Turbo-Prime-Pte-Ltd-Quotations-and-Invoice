@@ -1374,19 +1374,15 @@ def render_letterhead(st, logo_path, cert_path):
     def font(path, size):
         return ImageFont.truetype(path, max(int(round(size * S)), 6))
 
-    # Company name in the heavy "Arial Black" look of the original letterhead picture: bold Arial
-    # thickened by an outline, widened 13 % and slightly spaced (same font on every server).
+    # Company name in plain bold Arial - the same font as the bold text and titles in the documents -
+    # with its capitals 25 pt tall, as before (same font on every server).
     title_img = None
     if title:
-        tf = font(fb, 31.5)
-        layer = PILImage.new("L", (int((tf.getlength(title) * 1.2 + 40 * S) + len(title) * 2 * S), 60 * S), 0)
-        ld = ImageDraw.Draw(layer)
-        x = 10 * S
-        for ch in title:
-            ld.text((x, 10 * S), ch, font=tf, fill=255, stroke_width=S, stroke_fill=255)
-            x += tf.getlength(ch) + 1.25 * S
+        tf = font(fb, 34.3)
+        layer = PILImage.new("L", (int(tf.getlength(title) + 40 * S), 60 * S), 0)
+        ImageDraw.Draw(layer).text((10 * S, 10 * S), title, font=tf, fill=255)
         layer = layer.crop(layer.getbbox())
-        tw, th = int(layer.width * 1.13), layer.height
+        tw, th = layer.width, layer.height
         if tw > 470 * S:                                    # a long name is scaled down to fit
             k = 470 * S / tw
             tw, th = int(tw * k), max(int(th * k), 1)
@@ -1441,7 +1437,7 @@ def letterhead_file(db=None):
         st = letterhead_settings(db)
         lp, cp = lh_image_path("logo"), lh_image_path("cert")
         sig = json.dumps([st, os.path.getmtime(lp), os.path.getsize(lp), os.path.getmtime(cp),
-                          os.path.getsize(cp), find_font(True), find_font(False), "v5"], sort_keys=True)
+                          os.path.getsize(cp), find_font(True), find_font(False), "v6"], sort_keys=True)
         cache = os.path.join(LETTERHEAD_DIR, "cache")
         path = os.path.join(cache, "hdr_" + hashlib.sha1(sig.encode()).hexdigest()[:16] + ".png")
         if not os.path.exists(path):
@@ -2478,6 +2474,229 @@ def valid_iso(text):
 # --------------------------------------------------------------------------
 # Routes
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# Excel download of the list pages (the rows shown, i.e. after any search)
+# --------------------------------------------------------------------------
+def _first_line(text):
+    return next((l.strip() for l in str(text or "").splitlines() if l.strip()), "")
+
+
+def _num(value):
+    try:
+        return float(Decimal(str(value or "0")))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _xl_date(value):
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return value or ""
+
+
+def _status(r):
+    return "Draft" if ("is_draft" in r.keys() and r["is_draft"]) else "Final"
+
+
+# per list: sheet / file title, columns (heading, value-from-row, kind), customer heading
+# kinds: text, date, money (a number in the document's currency)
+XLSX_LISTS = {
+    "quotations": ("Quotations", "Customer", [
+        ("Quotation No", lambda r: r["quote_no"], "text"),
+        ("Date", lambda r: _xl_date(r["q_date"]), "date"),
+        ("Customer", lambda r: _first_line(r["to_address"]), "text"),
+        ("Vessel Name", lambda r: r["vessel_name"] or "", "text"),
+        ("Your Ref", lambda r: r["your_ref"] or "", "text"),
+        ("TC Type", lambda r: r["tc_type"] or "", "text"),
+        ("Currency", lambda r: r["currency"] or "", "text"),
+        ("Sub Total", lambda r: _num(r["subtotal"]), "money"),
+        ("Discount", lambda r: _num(r["discount_amt"]), "money"),
+        ("Total", lambda r: _num(r["total"]), "money"),
+        ("Status", _status, "text"),
+        ("Job Order", lambda r: r["jo_no"] or "", "text"),
+        ("Full Address", lambda r: (r["to_address"] or "").replace("\r", ""), "text")]),
+    "jobs": ("Job Orders", "Customer", [
+        ("Job Order No", lambda r: r["jo_no"], "text"),
+        ("Date", lambda r: _xl_date(r["jo_date"]), "date"),
+        ("Customer", lambda r: _first_line(r["to_address"]), "text"),
+        ("Customer PO No", lambda r: r["po_number"] or "", "text"),
+        ("Vessel Name", lambda r: r["vessel_name"] or "", "text"),
+        ("Quotation No", lambda r: r["quote_no"], "text"),
+        ("Currency", lambda r: r["currency"] or "", "text"),
+        ("Total", lambda r: _num(r["total"]), "money"),
+        ("Status", _status, "text"),
+        ("Full Address", lambda r: (r["to_address"] or "").replace("\r", ""), "text")]),
+    "deliveries": ("Delivery Orders", "Customer", [
+        ("Delivery Order No", lambda r: r["do_no"], "text"),
+        ("Date", lambda r: _xl_date(r["do_date"]), "date"),
+        ("Customer", lambda r: _first_line(r["to_address"]), "text"),
+        ("Customer PO No", lambda r: r["po_number"] or "", "text"),
+        ("Vessel Name", lambda r: r["vessel_name"] or "", "text"),
+        ("Shipper Name", lambda r: r["shipper_name"] or "", "text"),
+        ("Job Order", lambda r: r["jo_no"] or "", "text"),
+        ("Status", _status, "text"),
+        ("Full Address", lambda r: (r["to_address"] or "").replace("\r", ""), "text")]),
+    "invoices": ("Tax Invoices", "Customer", [
+        ("Invoice No", lambda r: r["inv_no"], "text"),
+        ("Date", lambda r: _xl_date(r["inv_date"]), "date"),
+        ("Customer", lambda r: _first_line(r["to_address"]), "text"),
+        ("Customer PO No", lambda r: r["po_number"] or "", "text"),
+        ("Vessel Name", lambda r: r["vessel_name"] or "", "text"),
+        ("Delivery Order", lambda r: r["do_no"] or "", "text"),
+        ("Job Order", lambda r: r["jo_no"] or "", "text"),
+        ("Currency", lambda r: r["currency"] or "", "text"),
+        ("Sub Total", lambda r: _num(r["subtotal"]), "money"),
+        ("Discount", lambda r: _num(r["discount_amt"]), "money"),
+        ("GST", lambda r: _num(r["gst_amt"]), "money"),
+        ("Total", lambda r: _num(r["total"]), "money"),
+        ("Status", _status, "text"),
+        ("Full Address", lambda r: (r["to_address"] or "").replace("\r", ""), "text")]),
+    "purchase_orders": ("Purchase Orders", "Supplier", [
+        ("PO No", lambda r: r["po_no"], "text"),
+        ("Date", lambda r: _xl_date(r["po_date"]), "date"),
+        ("Supplier", lambda r: _first_line(r["to_address"]), "text"),
+        ("Your Ref", lambda r: r["your_ref"] or "", "text"),
+        ("Job Order", lambda r: r["jo_no"] or "", "text"),
+        ("Currency", lambda r: r["currency"] or "", "text"),
+        ("Sub Total", lambda r: _num(r["subtotal"]), "money"),
+        ("Discount", lambda r: _num(r["discount_amt"]), "money"),
+        ("GST", lambda r: _num(r["gst_amt"]), "money"),
+        ("Total", lambda r: _num(r["total"]), "money"),
+        ("Status", _status, "text"),
+        ("Full Address", lambda r: (r["to_address"] or "").replace("\r", ""), "text")]),
+}
+
+
+def _export_columns(K):
+    cols = [(f"{K['title']} No", lambda r, K=K: r[K["no"]], "text"),
+            ("Date", lambda r, K=K: _xl_date(r[K["date"]]), "date"),
+            ("Customer", lambda r: _first_line(r["to_address"]), "text"),
+            ("Customer PO No", lambda r: r["po_no"] or "", "text"),
+            ("Vessel Name", lambda r: r["vessel_name"] or "", "text"),
+            ("Shipper Name", lambda r: r["shipper_name"] or "", "text")]
+    if K["prices"]:
+        cols += [("Currency", lambda r: r["currency"] or "", "text"), ("Total", lambda r: _num(r["total"]), "money")]
+    cols += [("Status", _status, "text"), ("Full Address", lambda r: (r["to_address"] or "").replace("\r", ""), "text")]
+    return (K["plural"], "Customer", cols)
+
+
+def list_xlsx(spec, rows, search=""):
+    """The list as an .xlsx file: sheet 1 = every row shown (numbers and dates as real Excel values,
+    filters on), sheet 2 = per customer (and currency) the number of documents and the total amount,
+    as formulas on sheet 1; drafts are not counted there."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    title, who, cols = spec
+    wb = Workbook()
+    ws = wb.active
+    ws.title = title[:31]
+    head_font = Font(bold=True, color="FFFFFF")
+    head_fill = PatternFill("solid", fgColor="0B2A63")
+    ws.append([c[0] for c in cols])
+    for cell in ws[1]:
+        cell.font, cell.fill = head_font, head_fill
+        cell.alignment = Alignment(vertical="center")
+    data = []
+    for r in rows:
+        vals = [c[1](r) for c in cols]
+        data.append(vals)
+        ws.append(vals)
+    n = len(data)
+    widths = [len(c[0]) + 2 for c in cols]
+    for i, (name, _get, kind) in enumerate(cols, start=1):
+        letter = get_column_letter(i)
+        for row in range(2, n + 2):
+            cell = ws.cell(row=row, column=i)
+            if kind == "money":
+                cell.number_format = "#,##0.00"
+            elif kind == "date":
+                cell.number_format = "DD-MM-YYYY"
+        for v in (d[i - 1] for d in data):
+            shown = 10 if kind == "date" else (12 if kind == "money" else len(str(v).split("\n")[0]))
+            widths[i - 1] = max(widths[i - 1], min(shown + 2, 50))
+        ws.column_dimensions[letter].width = widths[i - 1]
+    ws.freeze_panes = "B2"
+    if n:
+        ws.auto_filter.ref = f"A1:{get_column_letter(len(cols))}{n + 1}"
+
+    # ---- sheet 2: per customer --------------------------------------------------
+    names = [c[0] for c in cols]
+    col = lambda name: get_column_letter(names.index(name) + 1) if name in names else None
+    c_who, c_cur, c_tot, c_stat = col(who), col("Currency"), col("Total"), col("Status")
+    sheet1 = f"'{ws.title}'"
+    rng = lambda letter: f"{sheet1}!${letter}$2:${letter}${max(n + 1, 2)}"
+    ws2 = wb.create_sheet(f"By {who.lower()}")
+    groups = {}
+    for d in data:
+        if d[names.index("Status")] == "Draft":
+            continue
+        key = (d[names.index(who)], d[names.index("Currency")] if c_cur else "")
+        tot = d[names.index("Total")] if c_tot else 0
+        groups[key] = groups.get(key, 0) + (tot or 0)
+    order = sorted(groups, key=lambda k: (k[1], -groups[k], k[0].lower()))
+    heads = [who] + (["Currency"] if c_cur else []) + [f"No. of {title}"] + (["Total Amount"] if c_tot else [])
+    ws2.append(heads)
+    for cell in ws2[1]:
+        cell.font, cell.fill = head_font, head_fill
+    for i, (name, cur) in enumerate(order, start=2):
+        # an empty name / currency is matched with "=" (blank cells) and shown as "(no name)"
+        crit = f'{rng(c_who)},{"$A" + str(i) if name else chr(34) + "=" + chr(34)},{rng(c_stat)},"<>Draft"'
+        row = [name or "(no name)"]
+        if c_cur:
+            row.append(cur)
+            crit += f",{rng(c_cur)},{'$B' + str(i) if cur else chr(34) + '=' + chr(34)}"
+        row.append(f"=COUNTIFS({crit})")
+        if c_tot:
+            row.append(f"=SUMIFS({rng(c_tot)},{crit})")
+        ws2.append(row)
+        if c_tot:
+            ws2.cell(row=i, column=len(row)).number_format = "#,##0.00"
+    last = len(order) + 1
+    if order:                                                # grand totals per currency
+        ws2.append([None])                                   # a blank line before the totals
+        curs = sorted({k[1] for k in order}) if c_cur else [""]
+        for cur in curs:
+            label = f"All {who.lower()}s" + (f" ({cur})" if cur else "")
+            row = [label] + ([cur] if c_cur else [])
+            cnt_col = get_column_letter(len(row) + 1)
+            if c_cur:
+                row.append(f'=SUMIFS({cnt_col}$2:{cnt_col}${last},$B$2:$B${last},"{cur}")')
+            else:
+                row.append(f"=SUM({cnt_col}$2:{cnt_col}${last})")
+            if c_tot:
+                tcol = get_column_letter(len(row) + 1)
+                row.append(f'=SUMIFS({tcol}$2:{tcol}${last},$B$2:$B${last},"{cur}")' if c_cur
+                           else f"=SUM({tcol}$2:{tcol}${last})")
+            ws2.append(row)
+            r = ws2.max_row
+            for cell in ws2[r]:
+                cell.font = Font(bold=True)
+            if c_tot:
+                ws2.cell(row=r, column=len(row)).number_format = "#,##0.00"
+    for i, h in enumerate(heads, start=1):
+        longest = max([len(str(ws2.cell(row=r, column=i).value or "")) for r in range(1, ws2.max_row + 1)
+                       if not str(ws2.cell(row=r, column=i).value or "").startswith("=")] + [len(h)])
+        ws2.column_dimensions[get_column_letter(i)].width = min(max(longest + 2, 14), 50)
+    ws2.freeze_panes = "A2"
+    ws2.cell(row=ws2.max_row + 2, column=1,
+             value="Drafts are not counted on this sheet. The figures are formulas on the first sheet.").font = Font(italic=True, color="777777")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    stamp = date.today().isoformat()
+    tag = ("_" + re.sub(r"[^A-Za-z0-9]+", "-", search).strip("-")[:30]) if search else ""
+    return send_file(buf, as_attachment=True, download_name=f"{title.replace(' ', '_')}_{stamp}{tag}.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+def wants_xlsx():
+    return request.args.get("format") == "xlsx"
+
+
 @app.route("/")
 def index():
     db = get_db()
@@ -2490,6 +2709,8 @@ def index():
                 "OR q.your_ref LIKE ? OR j.jo_no LIKE ? OR q.vessel_name LIKE ?)")
         args += [f"%{search}%"] * 5
     rows = db.execute(sql + " ORDER BY q.id DESC", args).fetchall()
+    if wants_xlsx():
+        return list_xlsx(XLSX_LISTS["quotations"], rows, search)
     return render_template("index.html", rows=rows, search=search)
 
 
@@ -2746,7 +2967,7 @@ def po_change_message(old_po, new_po, n_do, kept_do, n_inv, kept_inv):
 def jobs():
     db = get_db()
     search = request.args.get("q", "").strip()
-    sql = ("SELECT j.*, q.quote_no, q.to_address FROM job_orders j "
+    sql = ("SELECT j.*, q.quote_no, q.to_address, q.currency FROM job_orders j "
            "JOIN quotations q ON q.id = j.quotation_id WHERE q.company = ?")
     args = [active_company()["key"]]
     if search:
@@ -2754,6 +2975,8 @@ def jobs():
                 "OR CAST(q.quote_no AS TEXT) LIKE ?)")
         args += [f"%{search}%"] * 4
     rows = db.execute(sql + " ORDER BY j.id DESC", args).fetchall()
+    if wants_xlsx():
+        return list_xlsx(XLSX_LISTS["jobs"], rows, search)
     return render_template("jobs.html", rows=rows, search=search)
 
 
@@ -3059,6 +3282,8 @@ def purchase_orders():
         sql += " AND (p.po_no LIKE ? OR j.jo_no LIKE ? OR p.to_address LIKE ? OR p.your_ref LIKE ?)"
         args += [f"%{search}%"] * 4
     rows = db.execute(sql + " ORDER BY p.id DESC", args).fetchall()
+    if wants_xlsx():
+        return list_xlsx(XLSX_LISTS["purchase_orders"], rows, search)
     return render_template("purchase_orders.html", rows=rows, search=search)
 
 
@@ -3270,6 +3495,8 @@ def deliveries():
                 "OR d.vessel_name LIKE ? OR d.shipper_name LIKE ?)")
         args += [f"%{search}%"] * 6
     rows = db.execute(sql + " ORDER BY d.id DESC", args).fetchall()
+    if wants_xlsx():
+        return list_xlsx(XLSX_LISTS["deliveries"], rows, search)
     return render_template("deliveries.html", rows=rows, search=search)
 
 
@@ -3596,6 +3823,8 @@ def invoices():
                 "OR q.to_address LIKE ? OR i.vessel_name LIKE ?)")
         args += [f"%{search}%"] * 6
     rows = db.execute(sql + " ORDER BY i.id DESC", args).fetchall()
+    if wants_xlsx():
+        return list_xlsx(XLSX_LISTS["invoices"], rows, search)
     return render_template("invoices.html", rows=rows, search=search)
 
 
@@ -3963,6 +4192,8 @@ def make_export_routes(kind):
             sql += f" AND ({K['no']} LIKE ? OR to_address LIKE ? OR po_no LIKE ? OR vessel_name LIKE ?)"
             args += [f"%{search}%"] * 4
         rows = db.execute(sql + " ORDER BY id DESC", args).fetchall()
+        if wants_xlsx():
+            return list_xlsx(_export_columns(K), rows, search)
         return render_template("export_list.html", k=K, rows=rows, search=search)
 
     def edit_view(xid=None):
