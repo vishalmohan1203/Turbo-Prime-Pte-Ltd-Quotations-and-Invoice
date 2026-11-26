@@ -3,9 +3,11 @@
 <div class="card">
   <div class="toolbar">
     <h2 style="margin:0">Quotations</h2>
-    <form method="get" style="display:flex;gap:8px;max-width:360px;width:100%">
+    <form method="get" style="display:flex;gap:8px;max-width:520px;width:100%">
       <input name="q" value="{{ search }}" placeholder="Search number, customer, vessel, ref, job order…">
       <button class="btn sec" type="submit">Search</button>
+      <a class="btn sec" href="{{ url_for(request.endpoint, q=search or None, format='xlsx') }}" style="white-space:nowrap"
+         title="Download this list (as shown, after any search) as an Excel file, with a per-customer summary sheet">Download Excel</a>
     </form>
     <a class="btn" href="{{ url_for('new') }}">+ New Quotation</a>
   </div>
