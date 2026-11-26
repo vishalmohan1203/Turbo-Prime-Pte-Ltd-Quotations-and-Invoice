@@ -1506,14 +1506,50 @@ def tight_header(company_key, content_w, left_pad):
 SAMPLE_HEADER = {"pte": (470, 4, 28)}
 
 
+# Every document uses the quotation's page: US Letter, the same letterhead (490 pt wide, 82 pt from the
+# left, 27.5 pt from the top), text between the same left / right edges, 10 pt text and a 14.7 pt title.
+STD_LEFT, STD_RIGHT = 59.5, 551.5         # left / right edge of the content (= the quotation's item table)
+STD_W = STD_RIGHT - STD_LEFT              # 492 pt
+STD_HEADER = (490, 82.0, 27.5)            # letterhead width, left edge, top edge on the page (pt)
+STD_TITLE_TOP, STD_TO_TOP = 147.1, 164.2  # where the title and the 'To' block start (pt from the page top)
+STD_DETAILS_X = 378.2                     # left edge of the No / Date / ... details block
+
+
+def std_doc(buf, company, title, bottom_m=40):
+    """Page set-up shared by all documents (the quotation's). Returns doc, letterhead flowable, top."""
+    hw, hx, htop = STD_HEADER
+    left_m = STD_LEFT - 6                                  # frames add 6 pt padding
+    doc, hdr, _hh = make_doc(buf, LETTER, left_m, LETTER[0] - STD_RIGHT - 6, htop - 6, bottom_m,
+                             company, title, hw, hx - left_m - 6)
+    return doc, hdr, htop
+
+
+def std_styles():
+    """The quotation's text styles: 10 pt navy text, bold headings, 14.7 pt bold title."""
+    base = ParagraphStyle("base", fontName="Helvetica", fontSize=10, leading=12.7, textColor=NAVY)
+    bold = ParagraphStyle("bold", parent=base, fontName="Helvetica-Bold")
+    return {"base": base, "bold": bold,
+            "title": ParagraphStyle("title", parent=bold, fontSize=14.7, leading=18, alignment=TA_CENTER),
+            "ctr": ParagraphStyle("ctr", parent=base, alignment=TA_CENTER),
+            "right": ParagraphStyle("right", parent=base, alignment=TA_RIGHT),
+            "head_c": ParagraphStyle("head_c", parent=bold, alignment=TA_CENTER),
+            "head_r": ParagraphStyle("head_r", parent=bold, alignment=TA_RIGHT)}
+
+
+def std_top(hdr, htop, heading, title_style, width):
+    """Letterhead, then the underlined title at the quotation's height, then space down to the 'To' block."""
+    story = [NextPageTemplate("later"), hdr,
+             Spacer(1, max(1, STD_TITLE_TOP - (htop + _stack_height([hdr], width)))),
+             Paragraph(f"<u>{heading}</u>", title_style)]
+    story.append(Spacer(1, max(1, STD_TO_TOP - (htop + _stack_height(story, width)))))
+    return story
+
+
 def to_and_details(to_address, right_html, right_w, base):
-    """'To' + address on the left, the document details block on the right (shared by all PDFs)."""
-    CONTENT_W = 175 * mm
-    addr_w = max(stringWidth(l, "Helvetica", 9) for l in to_address.split("\n"))
-    # mirror the address's right edge about the page centre -> equal space either side of centre
-    right_x = min(CONTENT_W - addr_w, 122 * mm)   # short addresses: keep block from drifting right
-    right_x = max(right_x, addr_w + 8 * mm, 70 * mm)       # never crowd the address
-    right_x = min(right_x, CONTENT_W - right_w - 4 * mm)   # always fit inside the page
+    """'To' + address on the left, the document details block on the right (shared by all PDFs); the
+    details start where the quotation's do, moved left only when a long line would not fit."""
+    CONTENT_W = STD_W
+    right_x = min(STD_DETAILS_X - STD_LEFT, CONTENT_W - right_w - 4)
     info = Table([[Paragraph("To", base), ""],
                   [Paragraph(escape(to_address).replace("\n", "<br/>"), base), Paragraph(right_html, base)]],
                  colWidths=[right_x, CONTENT_W - right_x])
@@ -1678,59 +1714,50 @@ def _stack_height(flowables, width, avail=800):
 def build_job_pdf(q, items, jo):
     """Job order PDF laid out like the sample: letterhead, 'Job Order' title, To + details block at
     x=416pt, boxed '# | Item description | Quantity' table (no prices), then the editable Remarks."""
-    TITLE_TOP, TABLE_TOP, REMARKS_TOP = 126, 264, 440     # pt from the top of the page (tuned to the sample)
     q = {**dict(q), "jo_no": jo["jo_no"], "jo_date": jo["jo_date"], "po_number": jo["po_number"],
          "remarks": jo["remarks"]}
     buf = io.BytesIO()
-    hw, hleft, htop = SAMPLE_HEADER.get(q["company"], SAMPLE_HEADER["pte"])
-    doc, hdr, _hh = make_doc(buf, A4, 30, 30, htop, 40, q["company"], f"Job Order {q['jo_no']}", hw, hleft)
-    W = doc.width
-    # the sample uses 11pt text and a 16pt bold title
-    base = ParagraphStyle("base", fontName="Helvetica", fontSize=11, leading=14.3, textColor=NAVY)
-    bold = ParagraphStyle("bold", parent=base, fontName="Helvetica-Bold", leading=12)
-    desc_st = ParagraphStyle("desc_st", parent=base, leading=14)
-    title = ParagraphStyle("title", parent=bold, fontSize=16, leading=19, alignment=TA_CENTER)
-    ctr = ParagraphStyle("ctr", parent=base, alignment=TA_CENTER)
-    head_c = ParagraphStyle("head_c", parent=bold, alignment=TA_CENTER)
-    rem = ParagraphStyle("rem", parent=base, leftIndent=17, leading=14.7)   # x 53 incl. 6pt frame padding
+    doc, hdr, htop = std_doc(buf, q["company"], f"Job Order {q['jo_no']}")
+    W = STD_W
+    st = std_styles()                       # the quotation's text sizes
+    base, bold, title, ctr, head_c = st["base"], st["bold"], st["title"], st["ctr"], st["head_c"]
+    desc_st = base
+    rem = base
 
     def txt(v):
         return escape(str(v or "")).replace("\n", "<br/>")
 
-    top = [NextPageTemplate("later"), hdr, Spacer(1, max(1, TITLE_TOP - (htop + _stack_height([hdr], W)))),
-           Paragraph("<u>Job Order</u>", title),
-           Spacer(1, 2)]
+    top = std_top(hdr, htop, "Job Order", title, W)
     right_block = [Paragraph(txt(f"Job Order No: {q['jo_no']}"), ParagraphStyle("b14", parent=base, fontName="Helvetica-Bold")),
                    Paragraph(txt(f"Date: {fmt_date(q['jo_date'])}"), base),
                    Paragraph(txt(f"Customer PO No: {q['po_number']}"), base),
                    Paragraph(txt(f"TC Type: {q['tc_type']}"), base),
                    Paragraph(txt(f"Vessel Name: {jo['vessel_name'] or ''}"), base)]
     info = Table([[Paragraph("To", base), ""],
-                  [Paragraph(txt(q["to_address"]), base), right_block]], colWidths=[366, W - 366])
+                  [Paragraph(txt(q["to_address"]), base), right_block]],
+                 colWidths=[STD_DETAILS_X - STD_LEFT, W - (STD_DETAILS_X - STD_LEFT)])
     info.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
                               ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0),
                               ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
-    story = top + [info]
-    gap = max(14, TABLE_TOP - (doc.topMargin + _stack_height(story, W)))
-    story.append(Spacer(1, gap))
+    info.hAlign = "LEFT"
+    story = top + [info, Spacer(1, 8)]
 
-    # '#' 30-80 | description 80-306 (header centred at 193) | spacer 306-335 | quantity 335-565 (centred at 450)
-    cw = [50, 226, 29, W - 305]
+    # '#' | description | spacer | quantity  (the quotation's '#' and description start)
+    cw = [20.2, 291.8, 20.0, W - 332.0]
     rows = [[Paragraph("#", bold), Paragraph("Item description", bold), "", Paragraph("Quantity", head_c)]]
     for it in items:
         rows.append([Paragraph(txt(it["sno"]), desc_st), Paragraph(rich(it["description"]), desc_st), "",
                      Paragraph(fmt_qty(it["qty"]), ctr)])
     t = Table(rows, colWidths=cw, repeatRows=1)
     style = [("BOX", (0, 0), (-1, 0), 0.8, colors.black), ("VALIGN", (0, 0), (-1, -1), "TOP"),
-             ("LEFTPADDING", (0, 0), (0, -1), 7), ("LEFTPADDING", (1, 0), (1, -1), 6),
+             ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
              ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]
     style += [("SPAN", (1, r), (2, r)) for r in range(1, len(rows))]   # long descriptions use cols 2-3
     t.setStyle(TableStyle(style))
+    t.hAlign = "LEFT"
     story.append(t)
     if (q["remarks"] or "").strip():
-        h = t.wrap(W, 800)[1]
-        story += [Spacer(1, max(24, REMARKS_TOP - TABLE_TOP - h)),
-                  Paragraph("Remarks:", rem), Paragraph(styled(q["remarks"]), rem)]
+        story += [Spacer(1, 24), Paragraph("Remarks:", rem), Paragraph(styled(q["remarks"]), rem)]
     doc.build(story)
     buf.seek(0)
     return buf
@@ -1749,22 +1776,10 @@ def build_pdf(q, items, jo=None, do=None):
         q = {**dict(q), **{k: src[k] for k in ("remarks", "discount_type", "discount_value",
                                                "subtotal", "discount_amt", "total")}}
     buf = io.BytesIO()
-    doc, header, _hh = make_doc(buf, A4, 15 * mm, 15 * mm, 10 * mm, 15 * mm, q["company"],
-                                f"Delivery Order {do['do_no']}")
-
-    base = ParagraphStyle("base", fontName="Helvetica", fontSize=9, leading=12, textColor=NAVY)
-    bold = ParagraphStyle("bold", parent=base, fontName="Helvetica-Bold", textColor=NAVY)
-    desc_st = ParagraphStyle("desc_st", parent=base, fontSize=8.4, leading=11.5)
-    company = ParagraphStyle("company", parent=bold, fontSize=16, leading=20,
-                             alignment=TA_CENTER, textColor=NAVY)
-    center = ParagraphStyle("center", parent=base, alignment=TA_CENTER, fontSize=8, leading=10.5)
-    center_b = ParagraphStyle("center_b", parent=center, fontName="Helvetica-Bold", textColor=NAVY)
-    title = ParagraphStyle("title", parent=bold, fontSize=13, leading=16, alignment=TA_CENTER)
-    ctr = ParagraphStyle("ctr", parent=base, alignment=TA_CENTER)
-    right = ParagraphStyle("right", parent=base, alignment=TA_RIGHT)
-    right_b = ParagraphStyle("right_b", parent=right, fontName="Helvetica-Bold", textColor=NAVY)
-    head_c = ParagraphStyle("head_c", parent=bold, alignment=TA_CENTER)
-    head_r = ParagraphStyle("head_r", parent=bold, alignment=TA_RIGHT)
+    doc, header, htop = std_doc(buf, q["company"], f"Delivery Order {do['do_no']}")
+    st = std_styles()                       # the quotation's text sizes
+    base, bold, title, ctr, right, head_c = st["base"], st["bold"], st["title"], st["ctr"], st["right"], st["head_c"]
+    desc_st = base
 
     def txt(value):
         return escape(str(value or "")).replace("\n", "<br/>")
@@ -1776,7 +1791,7 @@ def build_pdf(q, items, jo=None, do=None):
 
     # ---- Header: the image of the company the quotation belongs to --------
     heading = "Delivery Order" if do is not None else "Job Order" if jo else "Quotation"
-    story = [NextPageTemplate("later"), header, Spacer(1, 5 * mm), Paragraph(f"<u>{heading}</u>", title), Spacer(1, 3 * mm)]
+    story = std_top(header, htop, heading, title, STD_W)
 
     # ---- To (left) and document details (right) ------------------------
     if do is not None:
@@ -1798,12 +1813,13 @@ def build_pdf(q, items, jo=None, do=None):
     else:
         right_block = (f"<font color='#0b2a63'><b>{txt(first)}</b></font><br/>"
                        + "<br/>".join(txt(t) for t in others))
-    CONTENT_W = 175 * mm
-    right_w = max([stringWidth(first, "Helvetica-Bold", 9)] +
-                  [stringWidth(t, "Helvetica", 9) for t in others] +
-                  ([stringWidth(DO_BANNER, "Helvetica-Bold", 9)] if do is not None else []))
+    CONTENT_W = STD_W
+    right_w = max([stringWidth(first, "Helvetica-Bold", 10)] +
+                  [stringWidth(t, "Helvetica", 10) for t in others] +
+                  ([stringWidth(DO_BANNER, "Helvetica-Bold", 10)] if do is not None else []))
     info = to_and_details(q["to_address"], right_block, right_w, base)
-    story += [info, Spacer(1, 8 * mm)]
+    info.hAlign = "LEFT"
+    story += [info, Spacer(1, 8)]
 
     if do is not None:
         # ---- Delivery order body: no prices / discount / terms (as in the sample) ----
@@ -1812,17 +1828,20 @@ def build_pdf(q, items, jo=None, do=None):
         for it in items:
             do_rows.append([para(it["sno"]), Paragraph(rich(it["description"]), desc_st),
                             para(it["part_no"], ctr), para(fmt_qty(it["qty"]), ctr)])
-        do_t = Table(do_rows, colWidths=[9 * mm, 101 * mm, 35 * mm, 30 * mm], repeatRows=1)
+        do_t = Table(do_rows, colWidths=[20.2, 291.8, 90.0, 90.0], repeatRows=1)   # 492 pt, like the quotation
         do_t.setStyle(TableStyle([
             ("BOX", (0, 0), (-1, 0), 0.8, colors.black),                 # header box only, no column lines
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
             ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
         ]))
+        do_t.hAlign = "LEFT"
         sign = Table([[Paragraph("Authorised Signature", base),
                        Paragraph("Customer's chop and signature", right)]],
                      colWidths=[CONTENT_W / 2, CONTENT_W / 2])
         sign.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0),
                                   ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+        sign.hAlign = "LEFT"
         sign_h = sign.wrap(doc.width - 12, doc.height)[1]
         story += [do_t, _GapOrFill(doc, sign_h, min_gap=15 * mm), sign]
         doc.build(story)
@@ -1992,38 +2011,32 @@ def build_invoice_pdf(q, inv, items, jo_no):
     """Tax invoice PDF (layout of Tax_Invoice_sample.pdf): letterhead, details, item table with
     part numbers and prices, sub total / GST / total, bank details and 'On behalf of'."""
     buf = io.BytesIO()
-    doc, header, _hh = make_doc(buf, A4, 15 * mm, 15 * mm, 10 * mm, 15 * mm, q["company"],
-                                f"Tax Invoice {inv['inv_no']}")
+    doc, header, htop = std_doc(buf, q["company"], f"Tax Invoice {inv['inv_no']}")
     c = co(q["company"])
     cur = q["currency"]
-
-    base = ParagraphStyle("base", fontName="Helvetica", fontSize=9, leading=12, textColor=NAVY)
-    bold = ParagraphStyle("bold", parent=base, fontName="Helvetica-Bold")
-    desc_st = ParagraphStyle("desc_st", parent=base, fontSize=8.4, leading=11.5)
-    title = ParagraphStyle("title", parent=bold, fontSize=14, leading=18, alignment=TA_CENTER)
-    ctr = ParagraphStyle("ctr", parent=base, alignment=TA_CENTER)
-    right = ParagraphStyle("right", parent=base, alignment=TA_RIGHT)
+    st = std_styles()                       # the quotation's text sizes
+    base, bold, title, ctr, right = st["base"], st["bold"], st["title"], st["ctr"], st["right"]
+    head_c, head_r = st["head_c"], st["head_r"]
+    desc_st = base
     right_b = ParagraphStyle("right_b", parent=right, fontName="Helvetica-Bold")
-    head_c = ParagraphStyle("head_c", parent=bold, alignment=TA_CENTER)
-    head_r = ParagraphStyle("head_r", parent=bold, alignment=TA_RIGHT)
 
     def txt(value):
         return escape(str(value or "")).replace("\n", "<br/>")
 
-    story = [NextPageTemplate("later"), header, Spacer(1, 5 * mm),
-             Paragraph("<u>Tax Invoice</u>", title), Spacer(1, 3 * mm)]
+    story = std_top(header, htop, "Tax Invoice", title, STD_W)
 
     # ---- To (left) and invoice details (right) ---------------------------
     lines = [f"No : {inv['inv_no']}", f"Date : {fmt_date(inv['inv_date'])}",
              f"TC Type : {q['tc_type']}", f"Customer PO No : {inv['po_number']}",
              f"Our JO No : {jo_no}", f"Vessel Name : {inv['vessel_name']}",
              f"Terms : {inv['pay_terms']}", f"Location : {inv['location']}"]
-    right_w = max(stringWidth(t, "Helvetica", 9) for t in lines)
-    story += [to_and_details(inv["to_address"] or q["to_address"], "<br/>".join(txt(t) for t in lines), right_w, base),
-              Spacer(1, 8 * mm)]
+    right_w = max(stringWidth(t, "Helvetica", 10) for t in lines)
+    info = to_and_details(inv["to_address"] or q["to_address"], "<br/>".join(txt(t) for t in lines), right_w, base)
+    info.hAlign = "LEFT"
+    story += [info, Spacer(1, 8)]
 
     # ---- Item table: # | Item description | Part Num | Quantity | Unit Price | Total Price ----
-    widths = [9 * mm, 72 * mm, 28 * mm, 20 * mm, 22 * mm, 24 * mm]
+    widths = Q_COLS                         # the quotation's columns
     rows = [[Paragraph("#", bold), Paragraph("Item description", bold), Paragraph("Part Num", head_c),
              Paragraph("Quantity", head_c), Paragraph("Unit Price", head_r),
              Paragraph("Total Price", head_r)]]
@@ -2036,9 +2049,12 @@ def build_invoice_pdf(q, inv, items, jo_no):
     items_t.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, 0), 0.8, colors.black),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (0, -1), 4), ("RIGHTPADDING", (-1, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (3, 0), (3, -1), 0), ("RIGHTPADDING", (3, 0), (3, -1), 0),   # 'Quantity' on one line
+        ("RIGHTPADDING", (-1, 0), (-1, -1), 4),
         ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
     ]))
+    items_t.hAlign = "LEFT"
     story.append(items_t)
 
     # ---- Sub total / (discount) / GST / Total, right aligned ---------------
@@ -2050,7 +2066,8 @@ def build_invoice_pdf(q, inv, items, jo_no):
     sums.append([Paragraph(f"GST {fmt_qty(inv['gst_rate'])}%", right),
                  Paragraph(fmt_money(inv["gst_amt"]), right)])
     sums.append([Paragraph(f"Total({txt(cur)})", right_b), Paragraph(fmt_money(inv["total"]), right_b)])
-    summ = Table(sums, colWidths=[120 * mm, 55 * mm])
+    summ = Table(sums, colWidths=[STD_W - 156, 156])
+    summ.hAlign = "LEFT"
     summ.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
                               ("RIGHTPADDING", (-1, 0), (-1, -1), 4)]))
 
@@ -2059,7 +2076,8 @@ def build_invoice_pdf(q, inv, items, jo_no):
     bank += [Paragraph(txt(l), base) if l.strip() else Spacer(1, 3 * mm)
              for l in (inv["bank_details"] or get_bank_for(get_db(), q["company"], q["currency"])).replace("\r", "").split("\n")]
     behalf = [Paragraph("On behalf of", base), Paragraph(txt(c["legal"]), base)]
-    foot = Table([[bank, behalf]], colWidths=[115 * mm, 60 * mm])
+    foot = Table([[bank, behalf]], colWidths=[STD_W - 169, 169])
+    foot.hAlign = "LEFT"
     foot.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
                               ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
                               ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
@@ -2085,7 +2103,7 @@ def build_po_pdf(q, po, items):
     """Purchase order PDF laid out like the sample: letterhead, title, To + details (No / Your Ref /
     Our Ref No / Date / TC Type, all as typed), item table (# / Item description / Part No / Quantity /
     Unit Price / Total Price), one boxed TOTAL (currency) row and the computer-generated note."""
-    TITLE_TOP, DETAILS_TOP, TABLE_TOP = 152.4, 184.2, 266.0       # (tuned so the text lands where the sample's does)
+    TITLE_TOP, DETAILS_TOP, TABLE_TOP = 147.1, 178.9, 260.7       # title / 'To' at the quotation's height
     TOTAL_TOP, NOTE_TOP = 545.75, 701.05                         # top of the total row / of the note, pt from page top
     hw, hleft, htop = PO_HEADER.get(q["company"], PO_HEADER["pte"])
     buf = io.BytesIO()
@@ -2098,7 +2116,7 @@ def build_po_pdf(q, po, items):
     cur = po["currency"]
     base = ParagraphStyle("base", fontName="Helvetica", fontSize=10, leading=13.3, textColor=NAVY)
     bold = ParagraphStyle("bold", parent=base, fontName="Helvetica-Bold")
-    title = ParagraphStyle("title", parent=bold, fontSize=14.7, leading=18, alignment=TA_CENTER, leftIndent=30.6)
+    title = ParagraphStyle("title", parent=bold, fontSize=14.7, leading=18, alignment=TA_CENTER, leftIndent=33.8)
     ctr = ParagraphStyle("ctr", parent=base, alignment=TA_CENTER)
     right = ParagraphStyle("right", parent=base, alignment=TA_RIGHT)
     head_c = ParagraphStyle("head_c", parent=bold, alignment=TA_CENTER)
@@ -2213,16 +2231,12 @@ def build_export_pdf(kind, row, items):
     company = row["company"] or "pte"
     no = row[K["no"]]
     buf = io.BytesIO()
-    doc, header, _hh = make_doc(buf, A4, EXP_LEFT - 6, A4[0] - EXP_RIGHT - 6, 12, 40, company, f"{K['title']} {no}")
-    W = doc.width - 12
-    base = ParagraphStyle("base", fontName="Helvetica", fontSize=10, leading=13, textColor=NAVY)
-    bold = ParagraphStyle("bold", parent=base, fontName="Helvetica-Bold")
-    title = ParagraphStyle("title", parent=bold, fontSize=14.7, leading=18, alignment=TA_CENTER)
-    ctr = ParagraphStyle("ctr", parent=base, alignment=TA_CENTER)
-    right = ParagraphStyle("right", parent=base, alignment=TA_RIGHT)
-    head_c = ParagraphStyle("head_c", parent=bold, alignment=TA_CENTER)
-    head_r = ParagraphStyle("head_r", parent=bold, alignment=TA_RIGHT)
-    ind = ParagraphStyle("ind", parent=base, leftIndent=19)
+    doc, header, htop = std_doc(buf, company, f"{K['title']} {no}")
+    W = STD_W
+    st = std_styles()                       # the quotation's text sizes
+    base, bold, title, ctr, right = st["base"], st["bold"], st["title"], st["ctr"], st["right"]
+    head_c, head_r = st["head_c"], st["head_r"]
+    ind = ParagraphStyle("ind", parent=base, leftIndent=Q_COLS[0])
 
     def txt(v):
         return escape(str(v or "")).replace("\n", "<br/>")
@@ -2230,7 +2244,7 @@ def build_export_pdf(kind, row, items):
     lines = [f"No : {no}", f"Shipper Name : {row['shipper_name'] or ''}", f"Date : {fmt_date(row[K['date']])}",
              f"TC Type : {row['tc_type'] or ''}", f"Vessel Name : {row['vessel_name'] or ''}",
              f"Customer PO No : {row['po_no'] or ''}"]
-    left_w = (381 if K["prices"] else 345) - EXP_LEFT
+    left_w = STD_DETAILS_X - STD_LEFT
     info = Table([[Paragraph("To", bold), ""],
                   [Paragraph(txt(row["to_address"]), base), [Paragraph(txt(l), base) for l in lines]
                    + [Paragraph(f"<b>{escape(DO_BANNER)}</b>", base)]]],              # bold line under the PO no
@@ -2239,11 +2253,10 @@ def build_export_pdf(kind, row, items):
                               ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0),
                               ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
     info.hAlign = "LEFT"
-    story = [NextPageTemplate("later"), header, Spacer(1, 16), Paragraph(f"<u>{K['title']}</u>", title),
-             Spacer(1, 12), info, Spacer(1, 22)]
+    story = std_top(header, htop, K["title"], title, W) + [info, Spacer(1, 12)]
 
     if K["prices"]:
-        cols = EXP_CI_COLS
+        cols = Q_COLS                        # the quotation's columns
         rows = [[Paragraph("#", head_c), Paragraph("Item description", bold), Paragraph("Part No", head_c),
                  Paragraph("Quantity", head_c), Paragraph("Unit Price", head_r), Paragraph("Total Price", head_r)]]
         for it in items:
@@ -2251,7 +2264,8 @@ def build_export_pdf(kind, row, items):
                          Paragraph(txt(it["part_no"]), ctr), Paragraph(fmt_qty(it["qty"]), ctr),
                          Paragraph(fmt_money(it["unit_price"]), right), Paragraph(fmt_money(it["line_total"]), right)])
         style = [("BOX", (0, 0), (-1, 0), 1.2, colors.black), ("RIGHTPADDING", (4, 0), (4, -1), 6),
-                 ("RIGHTPADDING", (5, 0), (5, -1), 3)]
+                 ("RIGHTPADDING", (5, 0), (5, -1), 3),
+                 ("LEFTPADDING", (3, 0), (3, -1), 0), ("RIGHTPADDING", (3, 0), (3, -1), 0)]
     else:
         cols = EXP_PL_COLS
         rows = [[Paragraph("#", head_c), Paragraph("Item description", bold), Paragraph("Part No", head_c),
@@ -2261,16 +2275,16 @@ def build_export_pdf(kind, row, items):
                          Paragraph(txt(it["part_no"]), ctr), Paragraph(fmt_qty(it["qty"]), ctr)])
         style = [("BOX", (0, 0), (-1, 0), 0.8, colors.black), ("INNERGRID", (0, 0), (-1, 0), 0.8, colors.black)]
     items_t = Table(rows, colWidths=cols, repeatRows=1)
-    items_t.setStyle(TableStyle(style + [
+    items_t.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
         ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
-        ("TOPPADDING", (0, 1), (-1, 1), 5)]))
+        ("TOPPADDING", (0, 1), (-1, 1), 5)] + style))          # column-specific padding last, so it applies
     items_t.hAlign = "LEFT"
     story.append(items_t)
 
     foot = [Spacer(1, 26), Paragraph(f"<b>Customer PO No : </b>{txt(row['po_no'])}", ind)]
     if K["prices"]:
-        cw = [sum(cols[:4]), cols[4], cols[5]]
+        cw = [sum(cols[:3]), cols[3] + cols[4], cols[5]]     # 'Total(SGD)' on one line
         total_t = Table([["", Paragraph(f"<b>Total({txt(row['currency'])})</b>", right),
                           Paragraph(f"<b>{fmt_money(row['total'])}</b>", right)]], colWidths=cw)
         total_t.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
@@ -2287,9 +2301,7 @@ def build_export_pdf(kind, row, items):
     return buf
 
 
-PL_BOX_LEFT = 28.3                       # Packing List item table: as in the Excel sample (pt from the page edge)
-PL_COLS = [21.5, 197.9, 95.9, 224.6]     # # | Item description | Part No | Quantity  (box 28.3 - 568.2 pt)
-PL_INFO_X = 346.1                        # left edge of the No / Shipper Name / ... block
+PL_COLS = [20.2, 291.8, 90.0, 90.0]      # # | Item description | Part No | Quantity  (492 pt, like the quotation)
 
 
 def build_pl_pdf(row, items):
@@ -2300,15 +2312,10 @@ def build_pl_pdf(row, items):
     company = row["company"] or "pte"
     no = row["pl_no"]
     buf = io.BytesIO()
-    doc, header, _hh = make_doc(buf, A4, EXP_LEFT - 6, A4[0] - EXP_RIGHT - 6, 12, 40, company, f"Packing List {no}")
-    x0 = doc.leftMargin + 6                                       # where frame content starts on the page
-    base = ParagraphStyle("pl_base", fontName="Helvetica", fontSize=11, leading=14.5, textColor=NAVY)
-    bold = ParagraphStyle("pl_bold", parent=base, fontName="Helvetica-Bold")
-    title = ParagraphStyle("pl_title", parent=bold, fontSize=20, leading=24, alignment=TA_CENTER,
-                           rightIndent=2 * (x0 + (doc.width - 12) / 2 - A4[0] / 2))  # centred on the page
-    ctr = ParagraphStyle("pl_ctr", parent=base, alignment=TA_CENTER)
-    head_c = ParagraphStyle("pl_head_c", parent=bold, alignment=TA_CENTER)
-    ind = ParagraphStyle("pl_ind", parent=base, leftIndent=PL_BOX_LEFT + PL_COLS[0] + 2.5 - x0)
+    doc, header, htop = std_doc(buf, company, f"Packing List {no}")
+    st = std_styles()                       # the quotation's text sizes
+    base, bold, title, ctr, head_c = st["base"], st["bold"], st["title"], st["ctr"], st["head_c"]
+    ind = ParagraphStyle("pl_ind", parent=base, leftIndent=PL_COLS[0] + 2)
 
     def txt(v):
         return escape(str(v or "")).replace("\n", "<br/>")
@@ -2317,14 +2324,13 @@ def build_pl_pdf(row, items):
     lines = [f"No : {no}", f"Shipper Name : {row['shipper_name'] or ''}", f"Date : {date}",
              f"TC Type : {row['tc_type'] or ''}", f"Vessel Name : {row['vessel_name'] or ''}",
              f"PO No : {row['po_no'] or ''}"]
-    text_left = 30.8
-    left_w = PL_INFO_X - text_left
+    left_w = STD_DETAILS_X - STD_LEFT
     info = Table([[Paragraph(txt(row["to_address"]), base), Paragraph("<br/>".join(txt(l) for l in lines)
                                                                  + f"<br/><b>{escape(DO_BANNER)}</b>", base)]],
-                 colWidths=[left_w - 8, A4[0] - PL_INFO_X - 20])
+                 colWidths=[left_w, STD_W - left_w])
     info.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
                               ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0),
-                              ("BOTTOMPADDING", (0, 0), (-1, -1), 0), ("LEFTPADDING", (1, 0), (1, 0), 8)]))
+                              ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
     info.hAlign = "LEFT"
 
     rows = [[Paragraph("#", head_c), Paragraph("Item description", bold), Paragraph("Part No", head_c),
@@ -2336,20 +2342,18 @@ def build_pl_pdf(row, items):
     items_t.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, 0), 0.8, colors.black),                 # header box only, no column lines
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 2.5), ("RIGHTPADDING", (0, 0), (-1, -1), 2.5),
-        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, 0), 0.45), ("BOTTOMPADDING", (0, 0), (-1, 0), 0.45),
-        ("TOPPADDING", (0, 1), (-1, 1), 0)]))
+        ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+        ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+        ("TOPPADDING", (0, 1), (-1, 1), 3)]))
     items_t.hAlign = "LEFT"
 
-    foot = [Spacer(1, 29.1), Paragraph(f"PO No : {txt(row['po_no'])}", ParagraphStyle("pl_ind_b", parent=ind,
-                                                                                     fontName="Helvetica-Bold")),
-            Spacer(1, 29), Paragraph("Dimensions and Weight :", ind)]
+    foot = [Spacer(1, 26), Paragraph(f"PO No : {txt(row['po_no'])}", ParagraphStyle("pl_ind_b", parent=ind,
+                                                                                   fontName="Helvetica-Bold")),
+            Spacer(1, 24), Paragraph("Dimensions and Weight :", ind)]
     for l in (row["dimensions"] or "").replace("\r", "").split("\n"):
         foot.append(Paragraph(txt(l), ind) if l.strip() else Spacer(1, 6))
-    story = [NextPageTemplate("later"), header, Spacer(1, 15), Paragraph("<u>Packing List</u>", title),
-             Spacer(1, 15.7), _Indent(Paragraph("To", bold), text_left - x0), _Indent(info, text_left - x0),
-             Spacer(1, 29.1), _IndentSplit(items_t, PL_BOX_LEFT - x0), KeepTogether(foot)]
+    story = std_top(header, htop, "Packing List", title, STD_W) + [
+        Paragraph("To", bold), info, Spacer(1, 12), items_t, KeepTogether(foot)]
     doc.build(story)
     buf.seek(0)
     return buf
